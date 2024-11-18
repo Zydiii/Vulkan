@@ -516,7 +516,8 @@ public:
 
 		size_t i = 0;
 		for (auto& vertice : vertices) {
-			vertice.position = { vertexs[0][i][0] + 0.1 * current_frame, vertexs[0][i][1] + 0.2 * current_frame , vertexs[0][i][2] + 0.3 * current_frame };
+			vertice.position = { vertexs[0][i][0] + 0.001 * current_frame , vertexs[0][i][1] + 0.2  , vertexs[0][i][2] + 0.3 };
+			vertice.color = { 1, 1, 1 };
 			i++;
 		}
 
@@ -651,6 +652,7 @@ public:
 		if (!prepared)
 			return;
 		updateUniformBuffers();
+		buildCommandBuffers();
 		draw();
 	}
 
