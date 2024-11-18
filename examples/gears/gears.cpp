@@ -1,17 +1,23 @@
 /*
 * Vulkan Example - Drawing multiple animated gears (emulating the look of glxgears)
-* 
+*
 * All gears are using single index, vertex and uniform buffers to show the Vulkan best practices of keeping the no. of buffer/memory allocations to a mimimum
 * We use index offsets and instance indices to offset into the buffers at draw time for each gear
-* 
+*
 * Copyright (C) 2016-2023 by Sascha Willems - www.saschawillems.de
 *
 * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
 */
 
+#include <nlohmann/json.hpp>
+#include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
 #include "vulkanexamplebase.h"
 
-const uint32_t numGears = 3;
+const uint32_t numGears = 1;
 
 // Used for passing the definition of a gear during construction
 struct GearDefinition {
@@ -25,6 +31,60 @@ struct GearDefinition {
 	float rotSpeed;
 	float rotOffset;
 };
+
+glm::vec3 computeFaceNormal(const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2) {
+	glm::vec3 edge1 = v1 - v0;
+	glm::vec3 edge2 = v2 - v0;
+	glm::vec3 normal = glm::normalize(glm::cross(edge1, edge2));
+	return normal;
+}
+
+void computeVertexNormals(const std::vector<glm::vec3>& vertices, const std::vector<glm::ivec3>& faces, std::vector<glm::vec3>& normals) {
+	normals.resize(vertices.size(), glm::vec3(0.0f));
+	std::vector<int> count(vertices.size(), 0);
+
+	for (const auto& face : faces) {
+		glm::vec3 normal = computeFaceNormal(vertices[face[0]], vertices[face[1]], vertices[face[2]]);
+		for (int i = 0; i < 3; ++i) {
+			normals[face[i]] += normal;
+			count[face[i]]++;
+		}
+	}
+
+	for (size_t i = 0; i < normals.size(); ++i) {
+		if (count[i] > 0) {
+			normals[i] = glm::normalize(normals[i] / static_cast<float>(count[i]));
+		}
+	}
+}
+
+using json = nlohmann::json;
+
+namespace glm {
+	void to_json(json& j, const glm::ivec3& vec) {
+		j = json{ vec.x,vec.y, vec.z };
+	}
+
+	void from_json(const json& j, glm::ivec3& vec) {
+		j[0].get_to(vec.x);
+		j[1].get_to(vec.y);
+		j[2].get_to(vec.z);
+	}
+
+	void to_json(json& j, const glm::vec3& vec) {
+		j = json{ vec.x,vec.y, vec.z };
+	}
+
+	void from_json(const json& j, glm::vec3& vec) {
+		j[0].get_to(vec.x);
+		j[1].get_to(vec.y);
+		j[2].get_to(vec.z);
+	}
+} // namespace ns
+
+size_t current_frame = 0;
+
+std::vector<std::vector<glm::vec3>> vertexs;
 
 /*
  * Gear
@@ -47,6 +107,9 @@ public:
 	// These are used at draw time to offset into the single buffers
 	uint32_t indexCount{ 0 };
 	uint32_t indexStart{ 0 };
+
+
+
 
 	// Generates the indices and vertices for this gear
 	// They are added to the vertex and index buffers passed into the function
@@ -73,6 +136,17 @@ public:
 		r2 = gearDefinition.outerRadius + gearDefinition.toothDepth / 2.0f;
 		da = static_cast <float>(2.0 * M_PI / gearDefinition.numTeeth / 4.0);
 
+		const std::string file_name = "C:\\smpl_data.json";
+		std::ifstream f(file_name);
+		json data = json::parse(f);
+
+		vertexs = data["output_vertices"].template get<std::vector<std::vector<glm::vec3>>>();
+		auto faces = data["smpl_faces"].template get<std::vector<glm::ivec3>>();
+		std::vector<float> color = { 200 / 255.0, 200 / 255.0, 200 / 255.0 };
+
+		std::vector<glm::vec3> normals;
+		computeVertexNormals(vertexs[0], faces, normals);
+
 		glm::vec3 normal;
 
 		// Use lambda functions to simplify vertex and face creation
@@ -81,6 +155,10 @@ public:
 			indexBuffer.push_back(b);
 			indexBuffer.push_back(c);
 			};
+
+		for (auto& f : faces) {
+			addFace(f[0], f[1], f[2]);
+		}
 
 		auto addVertex = [this, &vertexBuffer](float x, float y, float z, glm::vec3 normal) {
 			Vertex v{};
@@ -91,113 +169,121 @@ public:
 			return static_cast<int32_t>(vertexBuffer.size()) - 1;
 			};
 
-		for (i = 0; i < gearDefinition.numTeeth; i++) {
-			ta = i * static_cast <float>(2.0 * M_PI / gearDefinition.numTeeth);
-
-			cos_ta = cos(ta);
-			cos_ta_1da = cos(ta + da);
-			cos_ta_2da = cos(ta + 2.0f * da);
-			cos_ta_3da = cos(ta + 3.0f * da);
-			cos_ta_4da = cos(ta + 4.0f * da);
-			sin_ta = sin(ta);
-			sin_ta_1da = sin(ta + da);
-			sin_ta_2da = sin(ta + 2.0f * da);
-			sin_ta_3da = sin(ta + 3.0f * da);
-			sin_ta_4da = sin(ta + 4.0f * da);
-
-			u1 = r2 * cos_ta_1da - r1 * cos_ta;
-			v1 = r2 * sin_ta_1da - r1 * sin_ta;
-			len = sqrt(u1 * u1 + v1 * v1);
-			u1 /= len;
-			v1 /= len;
-			u2 = r1 * cos_ta_3da - r2 * cos_ta_2da;
-			v2 = r1 * sin_ta_3da - r2 * sin_ta_2da;
-
-			// Front face
-			normal = glm::vec3(0.0f, 0.0f, 1.0f);
-			ix0 = addVertex(r0 * cos_ta, r0 * sin_ta, gearDefinition.width * 0.5f, normal);
-			ix1 = addVertex(r1 * cos_ta, r1 * sin_ta, gearDefinition.width * 0.5f, normal);
-			ix2 = addVertex(r0 * cos_ta, r0 * sin_ta, gearDefinition.width * 0.5f, normal);
-			ix3 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, gearDefinition.width * 0.5f, normal);
-			ix4 = addVertex(r0 * cos_ta_4da, r0 * sin_ta_4da, gearDefinition.width * 0.5f, normal);
-			ix5 = addVertex(r1 * cos_ta_4da, r1 * sin_ta_4da, gearDefinition.width * 0.5f, normal);
-			addFace(ix0, ix1, ix2);
-			addFace(ix1, ix3, ix2);
-			addFace(ix2, ix3, ix4);
-			addFace(ix3, ix5, ix4);
-
-			// Teeth front face
-			normal = glm::vec3(0.0f, 0.0f, 1.0f);
-			ix0 = addVertex(r1 * cos_ta, r1 * sin_ta, gearDefinition.width * 0.5f, normal);
-			ix1 = addVertex(r2 * cos_ta_1da, r2 * sin_ta_1da, gearDefinition.width * 0.5f, normal);
-			ix2 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, gearDefinition.width * 0.5f, normal);
-			ix3 = addVertex(r2 * cos_ta_2da, r2 * sin_ta_2da, gearDefinition.width * 0.5f, normal);
-			addFace(ix0, ix1, ix2);
-			addFace(ix1, ix3, ix2);
-
-			// Back face 
-			normal = glm::vec3(0.0f, 0.0f, -1.0f);
-			ix0 = addVertex(r1 * cos_ta, r1 * sin_ta, -gearDefinition.width * 0.5f, normal);
-			ix1 = addVertex(r0 * cos_ta, r0 * sin_ta, -gearDefinition.width * 0.5f, normal);
-			ix2 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, -gearDefinition.width * 0.5f, normal);
-			ix3 = addVertex(r0 * cos_ta, r0 * sin_ta, -gearDefinition.width * 0.5f, normal);
-			ix4 = addVertex(r1 * cos_ta_4da, r1 * sin_ta_4da, -gearDefinition.width * 0.5f, normal);
-			ix5 = addVertex(r0 * cos_ta_4da, r0 * sin_ta_4da, -gearDefinition.width * 0.5f, normal);
-			addFace(ix0, ix1, ix2);
-			addFace(ix1, ix3, ix2);
-			addFace(ix2, ix3, ix4);
-			addFace(ix3, ix5, ix4);
-
-			// Teeth back face
-			normal = glm::vec3(0.0f, 0.0f, -1.0f);
-			ix0 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, -gearDefinition.width * 0.5f, normal);
-			ix1 = addVertex(r2 * cos_ta_2da, r2 * sin_ta_2da, -gearDefinition.width * 0.5f, normal);
-			ix2 = addVertex(r1 * cos_ta, r1 * sin_ta, -gearDefinition.width * 0.5f, normal);
-			ix3 = addVertex(r2 * cos_ta_1da, r2 * sin_ta_1da, -gearDefinition.width * 0.5f, normal);
-			addFace(ix0, ix1, ix2);
-			addFace(ix1, ix3, ix2);
-
-			// Outard teeth faces
-			normal = glm::vec3(v1, -u1, 0.0f);
-			ix0 = addVertex(r1 * cos_ta, r1 * sin_ta, gearDefinition.width * 0.5f, normal);
-			ix1 = addVertex(r1 * cos_ta, r1 * sin_ta, -gearDefinition.width * 0.5f, normal);
-			ix2 = addVertex(r2 * cos_ta_1da, r2 * sin_ta_1da, gearDefinition.width * 0.5f, normal);
-			ix3 = addVertex(r2 * cos_ta_1da, r2 * sin_ta_1da, -gearDefinition.width * 0.5f, normal);
-			addFace(ix0, ix1, ix2);
-			addFace(ix1, ix3, ix2);
-
-			normal = glm::vec3(cos_ta, sin_ta, 0.0f);
-			ix0 = addVertex(r2 * cos_ta_1da, r2 * sin_ta_1da, gearDefinition.width * 0.5f, normal);
-			ix1 = addVertex(r2 * cos_ta_1da, r2 * sin_ta_1da, -gearDefinition.width * 0.5f, normal);
-			ix2 = addVertex(r2 * cos_ta_2da, r2 * sin_ta_2da, gearDefinition.width * 0.5f, normal);
-			ix3 = addVertex(r2 * cos_ta_2da, r2 * sin_ta_2da, -gearDefinition.width * 0.5f, normal);
-			addFace(ix0, ix1, ix2);
-			addFace(ix1, ix3, ix2);
-
-			normal = glm::vec3(v2, -u2, 0.0f);
-			ix0 = addVertex(r2 * cos_ta_2da, r2 * sin_ta_2da, gearDefinition.width * 0.5f, normal);
-			ix1 = addVertex(r2 * cos_ta_2da, r2 * sin_ta_2da, -gearDefinition.width * 0.5f, normal);
-			ix2 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, gearDefinition.width * 0.5f, normal);
-			ix3 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, -gearDefinition.width * 0.5f, normal);
-			addFace(ix0, ix1, ix2);
-			addFace(ix1, ix3, ix2);
-
-			normal = glm::vec3(cos_ta, sin_ta, 0.0f);
-			ix0 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, gearDefinition.width * 0.5f, normal);
-			ix1 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, -gearDefinition.width * 0.5f, normal);
-			ix2 = addVertex(r1 * cos_ta_4da, r1 * sin_ta_4da, gearDefinition.width * 0.5f, normal);
-			ix3 = addVertex(r1 * cos_ta_4da, r1 * sin_ta_4da, -gearDefinition.width * 0.5f, normal);
-			addFace(ix0, ix1, ix2);
-			addFace(ix1, ix3, ix2);
-
-			// Inside cylinder faces
-			ix0 = addVertex(r0 * cos_ta, r0 * sin_ta, -gearDefinition.width * 0.5f, glm::vec3(-cos_ta, -sin_ta, 0.0f));
-			ix1 = addVertex(r0 * cos_ta, r0 * sin_ta, gearDefinition.width * 0.5f, glm::vec3(-cos_ta, -sin_ta, 0.0f));
-			ix2 = addVertex(r0 * cos_ta_4da, r0 * sin_ta_4da, -gearDefinition.width * 0.5f, glm::vec3(-cos_ta_4da, -sin_ta_4da, 0.0f));
-			ix3 = addVertex(r0 * cos_ta_4da, r0 * sin_ta_4da, gearDefinition.width * 0.5f, glm::vec3(-cos_ta_4da, -sin_ta_4da, 0.0f));
-			addFace(ix0, ix1, ix2);
-			addFace(ix1, ix3, ix2);
+		size_t index = 0;
+		for (auto& v : vertexs[0]) {
+			normal = normals[index];
+			addVertex(v[0], v[1], v[2], normal);
+			index++;
 		}
+
+
+		//for (i = 0; i < gearDefinition.numTeeth; i++) {
+		//	ta = i * static_cast <float>(2.0 * M_PI / gearDefinition.numTeeth);
+
+		//	cos_ta = cos(ta);
+		//	cos_ta_1da = cos(ta + da);
+		//	cos_ta_2da = cos(ta + 2.0f * da);
+		//	cos_ta_3da = cos(ta + 3.0f * da);
+		//	cos_ta_4da = cos(ta + 4.0f * da);
+		//	sin_ta = sin(ta);
+		//	sin_ta_1da = sin(ta + da);
+		//	sin_ta_2da = sin(ta + 2.0f * da);
+		//	sin_ta_3da = sin(ta + 3.0f * da);
+		//	sin_ta_4da = sin(ta + 4.0f * da);
+
+		//	u1 = r2 * cos_ta_1da - r1 * cos_ta;
+		//	v1 = r2 * sin_ta_1da - r1 * sin_ta;
+		//	len = sqrt(u1 * u1 + v1 * v1);
+		//	u1 /= len;
+		//	v1 /= len;
+		//	u2 = r1 * cos_ta_3da - r2 * cos_ta_2da;
+		//	v2 = r1 * sin_ta_3da - r2 * sin_ta_2da;
+
+		//	// Front face
+		//	normal = glm::vec3(0.0f, 0.0f, 1.0f);
+		//	ix0 = addVertex(r0 * cos_ta, r0 * sin_ta, gearDefinition.width * 0.5f, normal);
+		//	ix1 = addVertex(r1 * cos_ta, r1 * sin_ta, gearDefinition.width * 0.5f, normal);
+		//	ix2 = addVertex(r0 * cos_ta, r0 * sin_ta, gearDefinition.width * 0.5f, normal);
+		//	ix3 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, gearDefinition.width * 0.5f, normal);
+		//	ix4 = addVertex(r0 * cos_ta_4da, r0 * sin_ta_4da, gearDefinition.width * 0.5f, normal);
+		//	ix5 = addVertex(r1 * cos_ta_4da, r1 * sin_ta_4da, gearDefinition.width * 0.5f, normal);
+		//	addFace(ix0, ix1, ix2);
+		//	addFace(ix1, ix3, ix2);
+		//	addFace(ix2, ix3, ix4);
+		//	addFace(ix3, ix5, ix4);
+
+		//	// Teeth front face
+		//	normal = glm::vec3(0.0f, 0.0f, 1.0f);
+		//	ix0 = addVertex(r1 * cos_ta, r1 * sin_ta, gearDefinition.width * 0.5f, normal);
+		//	ix1 = addVertex(r2 * cos_ta_1da, r2 * sin_ta_1da, gearDefinition.width * 0.5f, normal);
+		//	ix2 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, gearDefinition.width * 0.5f, normal);
+		//	ix3 = addVertex(r2 * cos_ta_2da, r2 * sin_ta_2da, gearDefinition.width * 0.5f, normal);
+		//	addFace(ix0, ix1, ix2);
+		//	addFace(ix1, ix3, ix2);
+
+		//	// Back face 
+		//	normal = glm::vec3(0.0f, 0.0f, -1.0f);
+		//	ix0 = addVertex(r1 * cos_ta, r1 * sin_ta, -gearDefinition.width * 0.5f, normal);
+		//	ix1 = addVertex(r0 * cos_ta, r0 * sin_ta, -gearDefinition.width * 0.5f, normal);
+		//	ix2 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, -gearDefinition.width * 0.5f, normal);
+		//	ix3 = addVertex(r0 * cos_ta, r0 * sin_ta, -gearDefinition.width * 0.5f, normal);
+		//	ix4 = addVertex(r1 * cos_ta_4da, r1 * sin_ta_4da, -gearDefinition.width * 0.5f, normal);
+		//	ix5 = addVertex(r0 * cos_ta_4da, r0 * sin_ta_4da, -gearDefinition.width * 0.5f, normal);
+		//	addFace(ix0, ix1, ix2);
+		//	addFace(ix1, ix3, ix2);
+		//	addFace(ix2, ix3, ix4);
+		//	addFace(ix3, ix5, ix4);
+
+		//	// Teeth back face
+		//	normal = glm::vec3(0.0f, 0.0f, -1.0f);
+		//	ix0 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, -gearDefinition.width * 0.5f, normal);
+		//	ix1 = addVertex(r2 * cos_ta_2da, r2 * sin_ta_2da, -gearDefinition.width * 0.5f, normal);
+		//	ix2 = addVertex(r1 * cos_ta, r1 * sin_ta, -gearDefinition.width * 0.5f, normal);
+		//	ix3 = addVertex(r2 * cos_ta_1da, r2 * sin_ta_1da, -gearDefinition.width * 0.5f, normal);
+		//	addFace(ix0, ix1, ix2);
+		//	addFace(ix1, ix3, ix2);
+
+		//	// Outard teeth faces
+		//	normal = glm::vec3(v1, -u1, 0.0f);
+		//	ix0 = addVertex(r1 * cos_ta, r1 * sin_ta, gearDefinition.width * 0.5f, normal);
+		//	ix1 = addVertex(r1 * cos_ta, r1 * sin_ta, -gearDefinition.width * 0.5f, normal);
+		//	ix2 = addVertex(r2 * cos_ta_1da, r2 * sin_ta_1da, gearDefinition.width * 0.5f, normal);
+		//	ix3 = addVertex(r2 * cos_ta_1da, r2 * sin_ta_1da, -gearDefinition.width * 0.5f, normal);
+		//	addFace(ix0, ix1, ix2);
+		//	addFace(ix1, ix3, ix2);
+
+		//	normal = glm::vec3(cos_ta, sin_ta, 0.0f);
+		//	ix0 = addVertex(r2 * cos_ta_1da, r2 * sin_ta_1da, gearDefinition.width * 0.5f, normal);
+		//	ix1 = addVertex(r2 * cos_ta_1da, r2 * sin_ta_1da, -gearDefinition.width * 0.5f, normal);
+		//	ix2 = addVertex(r2 * cos_ta_2da, r2 * sin_ta_2da, gearDefinition.width * 0.5f, normal);
+		//	ix3 = addVertex(r2 * cos_ta_2da, r2 * sin_ta_2da, -gearDefinition.width * 0.5f, normal);
+		//	addFace(ix0, ix1, ix2);
+		//	addFace(ix1, ix3, ix2);
+
+		//	normal = glm::vec3(v2, -u2, 0.0f);
+		//	ix0 = addVertex(r2 * cos_ta_2da, r2 * sin_ta_2da, gearDefinition.width * 0.5f, normal);
+		//	ix1 = addVertex(r2 * cos_ta_2da, r2 * sin_ta_2da, -gearDefinition.width * 0.5f, normal);
+		//	ix2 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, gearDefinition.width * 0.5f, normal);
+		//	ix3 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, -gearDefinition.width * 0.5f, normal);
+		//	addFace(ix0, ix1, ix2);
+		//	addFace(ix1, ix3, ix2);
+
+		//	normal = glm::vec3(cos_ta, sin_ta, 0.0f);
+		//	ix0 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, gearDefinition.width * 0.5f, normal);
+		//	ix1 = addVertex(r1 * cos_ta_3da, r1 * sin_ta_3da, -gearDefinition.width * 0.5f, normal);
+		//	ix2 = addVertex(r1 * cos_ta_4da, r1 * sin_ta_4da, gearDefinition.width * 0.5f, normal);
+		//	ix3 = addVertex(r1 * cos_ta_4da, r1 * sin_ta_4da, -gearDefinition.width * 0.5f, normal);
+		//	addFace(ix0, ix1, ix2);
+		//	addFace(ix1, ix3, ix2);
+
+		//	// Inside cylinder faces
+		//	ix0 = addVertex(r0 * cos_ta, r0 * sin_ta, -gearDefinition.width * 0.5f, glm::vec3(-cos_ta, -sin_ta, 0.0f));
+		//	ix1 = addVertex(r0 * cos_ta, r0 * sin_ta, gearDefinition.width * 0.5f, glm::vec3(-cos_ta, -sin_ta, 0.0f));
+		//	ix2 = addVertex(r0 * cos_ta_4da, r0 * sin_ta_4da, -gearDefinition.width * 0.5f, glm::vec3(-cos_ta_4da, -sin_ta_4da, 0.0f));
+		//	ix3 = addVertex(r0 * cos_ta_4da, r0 * sin_ta_4da, gearDefinition.width * 0.5f, glm::vec3(-cos_ta_4da, -sin_ta_4da, 0.0f));
+		//	addFace(ix0, ix1, ix2);
+		//	addFace(ix1, ix3, ix2);
+		//}
 
 		// We need to know how many indices this triangle has at draw time
 		indexCount = static_cast<uint32_t>(indexBuffer.size()) - indexStart;
@@ -257,7 +343,7 @@ public:
 	void prepareGears()
 	{
 		// Set up three differntly shaped and colored gears
-		std::vector<GearDefinition> gearDefinitions(3);
+		std::vector<GearDefinition> gearDefinitions(1);
 
 		// Large red gear
 		gearDefinitions[0].innerRadius = 1.0f;
@@ -265,13 +351,13 @@ public:
 		gearDefinitions[0].width = 1.0f;
 		gearDefinitions[0].numTeeth = 20;
 		gearDefinitions[0].toothDepth = 0.7f;
-		gearDefinitions[0].color = { 1.0f, 0.0f, 0.0f };
+		gearDefinitions[0].color = { 200 / 255.0f, 200 / 255.0f, 200 / 255.0f };
 		gearDefinitions[0].pos = { -3.0f, 0.0f, 0.0f };
 		gearDefinitions[0].rotSpeed = 1.0f;
 		gearDefinitions[0].rotOffset = 0.0f;
 
 		// Medium sized green gear
-		gearDefinitions[1].innerRadius = 0.5f;
+		/*gearDefinitions[1].innerRadius = 0.5f;
 		gearDefinitions[1].outerRadius = 2.0f;
 		gearDefinitions[1].width = 2.0f;
 		gearDefinitions[1].numTeeth = 10;
@@ -279,10 +365,10 @@ public:
 		gearDefinitions[1].color = { 0.0f, 1.0f, 0.2f };
 		gearDefinitions[1].pos = { 3.1f, 0.0f, 0.0f };
 		gearDefinitions[1].rotSpeed = -2.0f;
-		gearDefinitions[1].rotOffset = -9.0f;
+		gearDefinitions[1].rotOffset = -9.0f;*/
 
 		// Small blue gear
-		gearDefinitions[2].innerRadius = 1.3f;
+		/*gearDefinitions[2].innerRadius = 1.3f;
 		gearDefinitions[2].outerRadius = 2.0f;
 		gearDefinitions[2].width = 0.5f;
 		gearDefinitions[2].numTeeth = 10;
@@ -290,7 +376,7 @@ public:
 		gearDefinitions[2].color = { 0.0f, 0.0f, 1.0f };
 		gearDefinitions[2].pos = { -3.1f, -6.2f, 0.0f };
 		gearDefinitions[2].rotSpeed = -2.0f;
-		gearDefinitions[2].rotOffset = -30.0f;
+		gearDefinitions[2].rotOffset = -30.0f;*/
 
 		// We'll be using a single vertex and a single index buffer for all the gears, no matter their number
 		// This is a Vulkan best practice as it keeps the no. of memory/buffer allocations low
@@ -411,6 +497,53 @@ public:
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCreateInfo, nullptr, &pipeline));
 	}
 
+	void updateVertexBuffer(VkDevice device, VkCommandBuffer commandBuffer) {
+		//const std::vector<glm::vec3>& vertices = vertexs[current_frame];
+		std::vector<Gear::Vertex> vertices(6890);
+		vks::Buffer vertexStaging;
+		//for (int32_t i = 0; i < gears.size(); i++) {
+		//	//gears[i].generate(gearDefinitions[i], vertices, indices);
+		//	gears[i].pos = { 0.0f, 0.0f, 0.0f };
+
+		//	vertices.push_back({ 0.0f, 0.0f, 0.0f });
+		//}
+
+		//for (auto i = 0; i < 2000; i++)
+		//{
+		//	Gear::Vertex vet;
+		//	vet.position = { 0.0f, 0.0f, 0.0f };
+		//}
+
+		size_t i = 0;
+		for (auto& vertice : vertices) {
+			vertice.position = { vertexs[0][i][0] + 0.1 * current_frame, vertexs[0][i][1] + 0.2 * current_frame , vertexs[0][i][2] + 0.3 * current_frame };
+			i++;
+		}
+
+		current_frame++;
+
+		// Create buffers and stage to device for performances
+		size_t vertexBufferSize = vertices.size() * sizeof(Gear::Vertex);
+		vulkanDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &vertexStaging, vertexBufferSize, vertices.data());
+
+
+		/*void* data;
+		vkMapMemory(device, vertexBuffer.memory, 0, vertices.size() * sizeof(glm::vec3), 0, &data);
+		memcpy(data, vertices.data(), vertices.size() * sizeof(glm::vec3));
+		vkUnmapMemory(device, vertexBuffer.memory);*/
+
+		// Copy host (staging) to device
+		VkCommandBuffer copyCmd = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+		VkBufferCopy copyRegion = {};
+		copyRegion.size = vertexBufferSize;
+		vkCmdCopyBuffer(copyCmd, vertexStaging.buffer, vertexBuffer.buffer, 1, &copyRegion);
+		vulkanDevice->flushCommandBuffer(copyCmd, queue, true);
+
+		vertexStaging.destroy();
+
+		//current_frame = (current_frame + 1) % vertexs.size();
+	}
+
 	void buildCommandBuffers()
 	{
 		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
@@ -448,6 +581,7 @@ public:
 			VkDeviceSize offsets[1] = { 0 };
 			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
 			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &vertexBuffer.buffer, offsets);
+			updateVertexBuffer(device, drawCmdBuffers[i]);
 			vkCmdBindIndexBuffer(drawCmdBuffers[i], indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 			for (auto j = 0; j < numGears; j++) {
 				// We use the instance index (last argument) to pass the index of the triangle to the shader
@@ -484,9 +618,9 @@ public:
 		// Update the model matrix for each gear that contains it's position and rotation
 		for (auto i = 0; i < numGears; i++) {
 			Gear gear = gears[i];
-			uniformData.model[i] = glm::mat4(1.0f);
+			/*uniformData.model[i] = glm::mat4(1.0f);
 			uniformData.model[i] = glm::translate(uniformData.model[i], gear.pos);
-			uniformData.model[i] = glm::rotate(uniformData.model[i], glm::radians((gear.rotSpeed * degree) + gear.rotOffset), glm::vec3(0.0f, 0.0f, 1.0f));
+			uniformData.model[i] = glm::rotate(uniformData.model[i], glm::radians((gear.rotSpeed * degree) + gear.rotOffset), glm::vec3(0.0f, 0.0f, 1.0f));*/
 		}
 
 		memcpy(uniformBuffer.mapped, &uniformData, sizeof(UniformData));
