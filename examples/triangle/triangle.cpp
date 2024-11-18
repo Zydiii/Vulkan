@@ -18,6 +18,7 @@
 #include <fstream>
 #include <vector>
 #include <exception>
+#include <nlohmann/json.hpp>
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
@@ -32,14 +33,45 @@
 // Increasing this number may improve performance but will also introduce additional latency
 #define MAX_CONCURRENT_FRAMES 2
 
+
+
 class VulkanExample : public VulkanExampleBase
 {
 public:
+
+
 	// Vertex layout used in this example
 	struct Vertex {
 		float position[3];
 		float color[3];
 	};
+
+	bool ReadJson(std::vector<Vertex>& vertexBuffer, std::vector<uint32_t>& indexBuffer, std::string file_name = "C:\\Tools\\VKVis\\Base\\smpl_data.json")
+	{
+		using json = nlohmann::json;
+
+		std::ifstream f(file_name);
+		json data = json::parse(f);
+
+		auto pos = data["output_vertices"].template get<std::vector<std::vector<float>>>();
+		auto face = data["smpl_faces"].template get<std::vector<std::vector<float>>>();
+		std::vector<float> color = { 200 / 255.0, 200 / 255.0, 200 / 255.0 };
+
+		for (auto& v : pos) {
+			Vertex tmp;
+			memcpy(tmp.position, v.data(), sizeof(float) * 3);
+			memcpy(tmp.color, color.data(), sizeof(float) * 3);
+			vertexBuffer.emplace_back(tmp);
+		}
+
+		for (auto& f : face) {
+			indexBuffer.push_back(f[0]);
+			indexBuffer.push_back(f[1]);
+			indexBuffer.push_back(f[2]);
+		}
+
+		return true;
+	}
 
 	// Vertex buffer and attributes
 	struct {
@@ -188,7 +220,7 @@ public:
 		// Create the fences in signaled state (so we don't wait on first render of each command buffer)
 		fenceCI.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-		for (uint32_t i = 0; i < MAX_CONCURRENT_FRAMES; i++) {		
+		for (uint32_t i = 0; i < MAX_CONCURRENT_FRAMES; i++) {
 			// Semaphore used to ensure that image presentation is complete before starting to submit again
 			VK_CHECK_RESULT(vkCreateSemaphore(device, &semaphoreCI, nullptr, &presentCompleteSemaphores[i]));
 			// Semaphore used to ensure that all commands submitted have been finished before submitting the image to the queue
@@ -221,18 +253,24 @@ public:
 		//	This is a very complex topic and while it's fine for an example application to small individual memory allocations that is not
 		//	what should be done a real-world application, where you should allocate large chunks of memory at once instead.
 
+		std::vector<Vertex> vertexBuffer;
+		std::vector<uint32_t> indexBuffer;
+		ReadJson(vertexBuffer, indexBuffer);
+
 		// Setup vertices
-		std::vector<Vertex> vertexBuffer{
+		/*std::vector<Vertex> vertexBuffer{
 			{ {  1.0f,  1.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } },
 			{ { -1.0f,  1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f } },
 			{ {  0.0f, -1.0f, 0.0f }, { 0.0f, 0.0f, 1.0f } }
-		};
+		};*/
 		uint32_t vertexBufferSize = static_cast<uint32_t>(vertexBuffer.size()) * sizeof(Vertex);
 
 		// Setup indices
-		std::vector<uint32_t> indexBuffer{ 0, 1, 2 };
+		//std::vector<uint32_t> indexBuffer{ 0, 1, 2 };
 		indices.count = static_cast<uint32_t>(indexBuffer.size());
 		uint32_t indexBufferSize = indices.count * sizeof(uint32_t);
+
+
 
 		VkMemoryAllocateInfo memAlloc{};
 		memAlloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -337,7 +375,7 @@ public:
 		vkCmdCopyBuffer(copyCmd, stagingBuffers.vertices.buffer, vertices.buffer, 1, &copyRegion);
 		// Index buffer
 		copyRegion.size = indexBufferSize;
-		vkCmdCopyBuffer(copyCmd, stagingBuffers.indices.buffer, indices.buffer,	1, &copyRegion);
+		vkCmdCopyBuffer(copyCmd, stagingBuffers.indices.buffer, indices.buffer, 1, &copyRegion);
 		VK_CHECK_RESULT(vkEndCommandBuffer(copyCmd));
 
 		// Submit the command buffer to the queue to finish the copy
@@ -433,7 +471,7 @@ public:
 			// For every binding point used in a shader there needs to be one
 			// descriptor set matching that binding point
 			VkWriteDescriptorSet writeDescriptorSet{};
-			
+
 			// The buffer's information is passed using a descriptor info structure
 			VkDescriptorBufferInfo bufferInfo{};
 			bufferInfo.buffer = uniformBuffers[i].buffer;
@@ -512,7 +550,7 @@ public:
 			// Color attachment is the view of the swapchain image
 			attachments[0] = swapChain.buffers[i].view;
 			// Depth/Stencil attachment is the same for all frame buffers due to how depth works with current GPUs
-			attachments[1] = depthStencil.view;         
+			attachments[1] = depthStencil.view;
 
 			VkFramebufferCreateInfo frameBufferCI{};
 			frameBufferCI.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -549,8 +587,8 @@ public:
 		attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;               // Same for store
 		attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;                       // Layout at render pass start. Initial doesn't matter, so we use undefined
 		attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;                   // Layout to which the attachment is transitioned when the render pass is finished
-		                                                                                // As we want to present the color buffer to the swapchain, we transition to PRESENT_KHR
-		// Depth attachment
+		// As we want to present the color buffer to the swapchain, we transition to PRESENT_KHR
+// Depth attachment
 		attachments[1].format = depthFormat;                                           // A proper depth format is selected in the example base
 		attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
 		attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;                           // Clear depth at start of first subpass
@@ -1008,7 +1046,7 @@ public:
 		submitInfo.commandBufferCount = 1;                  // We submit a single command buffer
 
 		// Semaphore to wait upon before the submitted command buffer starts executing
-		submitInfo.pWaitSemaphores = &presentCompleteSemaphores[currentFrame]; 
+		submitInfo.pWaitSemaphores = &presentCompleteSemaphores[currentFrame];
 		submitInfo.waitSemaphoreCount = 1;
 		// Semaphore to be signaled when command buffers have completed
 		submitInfo.pSignalSemaphores = &renderCompleteSemaphores[currentFrame];
@@ -1047,7 +1085,7 @@ public:
 
 #if defined(_WIN32)
 // Windows entry point
-VulkanExample *vulkanExample;
+VulkanExample* vulkanExample;
 LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	if (vulkanExample != NULL)
@@ -1070,7 +1108,7 @@ int APIENTRY WinMain(_In_ HINSTANCE hInstance, _In_opt_  HINSTANCE hPrevInstance
 
 #elif defined(__ANDROID__)
 // Android entry point
-VulkanExample *vulkanExample;
+VulkanExample* vulkanExample;
 void android_main(android_app* state)
 {
 	vulkanExample = new VulkanExample();
@@ -1085,11 +1123,11 @@ void android_main(android_app* state)
 
 // Linux entry point with direct to display wsi
 // Direct to Displays (D2D) is used on embedded platforms
-VulkanExample *vulkanExample;
+VulkanExample* vulkanExample;
 static void handleEvent()
 {
 }
-int main(const int argc, const char *argv[])
+int main(const int argc, const char* argv[])
 {
 	for (size_t i = 0; i < argc; i++) { VulkanExample::args.push_back(argv[i]); };
 	vulkanExample = new VulkanExample();
@@ -1100,15 +1138,15 @@ int main(const int argc, const char *argv[])
 	return 0;
 }
 #elif defined(VK_USE_PLATFORM_DIRECTFB_EXT)
-VulkanExample *vulkanExample;
-static void handleEvent(const DFBWindowEvent *event)
+VulkanExample* vulkanExample;
+static void handleEvent(const DFBWindowEvent* event)
 {
 	if (vulkanExample != NULL)
 	{
 		vulkanExample->handleEvent(event);
 	}
 }
-int main(const int argc, const char *argv[])
+int main(const int argc, const char* argv[])
 {
 	for (size_t i = 0; i < argc; i++) { VulkanExample::args.push_back(argv[i]); };
 	vulkanExample = new VulkanExample();
@@ -1120,8 +1158,8 @@ int main(const int argc, const char *argv[])
 	return 0;
 }
 #elif defined(VK_USE_PLATFORM_WAYLAND_KHR)
-VulkanExample *vulkanExample;
-int main(const int argc, const char *argv[])
+VulkanExample* vulkanExample;
+int main(const int argc, const char* argv[])
 {
 	for (size_t i = 0; i < argc; i++) { VulkanExample::args.push_back(argv[i]); };
 	vulkanExample = new VulkanExample();
@@ -1135,9 +1173,9 @@ int main(const int argc, const char *argv[])
 #elif defined(__linux__) || defined(__FreeBSD__)
 
 // Linux entry point
-VulkanExample *vulkanExample;
+VulkanExample* vulkanExample;
 #if defined(VK_USE_PLATFORM_XCB_KHR)
-static void handleEvent(const xcb_generic_event_t *event)
+static void handleEvent(const xcb_generic_event_t* event)
 {
 	if (vulkanExample != NULL)
 	{
@@ -1149,7 +1187,7 @@ static void handleEvent()
 {
 }
 #endif
-int main(const int argc, const char *argv[])
+int main(const int argc, const char* argv[])
 {
 	for (size_t i = 0; i < argc; i++) { VulkanExample::args.push_back(argv[i]); };
 	vulkanExample = new VulkanExample();
@@ -1161,8 +1199,8 @@ int main(const int argc, const char *argv[])
 	return 0;
 }
 #elif (defined(VK_USE_PLATFORM_MACOS_MVK) || defined(VK_USE_PLATFORM_METAL_EXT)) && defined(VK_EXAMPLE_XCODE_GENERATED)
-VulkanExample *vulkanExample;
-int main(const int argc, const char *argv[])
+VulkanExample* vulkanExample;
+int main(const int argc, const char* argv[])
 {
 	@autoreleasepool
 	{

@@ -4,6 +4,8 @@
 cmake_minimum_required(VERSION 3.4 FATAL_ERROR)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake")
 
+add_subdirectory(external/nlohmann)
+
 set(NAME vulkanExamples)
 
 project(${NAME})
