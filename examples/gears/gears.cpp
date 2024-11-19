@@ -272,7 +272,7 @@ public:
 		std::vector<glm::vec3> normals(vertexs.size());
 		computeVertexNormals(vertexs, model.indexs, normals);
 		for (auto i{ 0 }; i < vertexs.size(); i++) {
-			model.vertexs[i].position = vertexs[i];
+			model.vertexs[i].position = { -vertexs[i].x * 3, -vertexs[i].y * 3, vertexs[i].z * 3 };
 			model.vertexs[i].normal = normals[i];
 			model.vertexs[i].color = { 200 / 255.0, 200 / 255.0, 200 / 255.0 };
 		}
@@ -626,6 +626,7 @@ public:
 
 		// Camera specific global matrices
 		uniformData.projection = camera.matrices.perspective;
+		//uniformData.projection[1][1] *= -1;
 		uniformData.view = camera.matrices.view;
 		uniformData.lightPos = glm::vec4(0.0f, 0.0f, 2.5f, 1.0f);
 
