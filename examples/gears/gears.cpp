@@ -220,9 +220,15 @@ public:
 	} uniformData;
 	vks::Buffer uniformBuffer;
 
+	struct PlaySettings {
+		bool pause = false;
+		float speed = 1;
+	} play_settings;
+
 	const std::string root_folder = "C:\\dump_model\\";
 	uint64_t frame_number;
-	uint64_t current_frame{ 0 };
+	int current_frame{ 0 };
+	uint32_t frame_speed_count = 0;
 	SMPLModel model;
 	vks::Buffer indexStaging;
 	vks::Buffer vertexStaging;
@@ -241,29 +247,29 @@ public:
 		timerSpeed *= 0.25f;
 
 		// Get model info
-		SetUpFrameNumber();
+		SetUpFrameNumberAndVertexInfo();
 		GetModelIndex();
 		vertex_file.open(root_folder + "vertices.bin", std::ios::binary);
-		GetModelVertexAndNormal();
 	}
 
-	inline void SetUpFrameNumber() {
+	void SetUpFrameNumberAndVertexInfo() {
 		std::fstream file(root_folder + "config.json");
 		json j = json::parse(file);
 		j["frame_number"].get_to(frame_number);
 		model.vertexs.resize(j["vertex_count"].template get<uint64_t>());
 		model.indexs.resize(j["index_count"].template get<uint64_t>());
+		indexBufferSize = model.indexs.size() * sizeof(uint32_t);
+		vertexBufferSize = model.vertexs.size() * sizeof(Gear::Vertex);
 		file.close();
 	}
 
-	inline void GetModelIndex()
+	void GetModelIndex()
 	{
 		std::ifstream index_file(root_folder + "index.bin", std::ios::binary);
 		if (index_file.is_open()) {
 			index_file.read(reinterpret_cast<char*>(model.indexs.data()), model.indexs.size() * sizeof(uint32_t));
 		}
 		index_file.close();
-		indexBufferSize = model.indexs.size() * sizeof(uint32_t);
 	}
 
 	void GetModelVertexAndNormal() {
@@ -275,67 +281,27 @@ public:
 		std::vector<glm::vec3> normals(vertexs.size());
 		computeVertexNormals(vertexs, model.indexs, normals);
 		for (auto i{ 0 }; i < vertexs.size(); i++) {
-			model.vertexs[i].position = { -vertexs[i].x * 3, -vertexs[i].y * 3, vertexs[i].z * 3 };
+			model.vertexs[i].position = { vertexs[i].x , -vertexs[i].y , vertexs[i].z };
 			model.vertexs[i].normal = normals[i];
 			model.vertexs[i].color = { 200 / 255.0, 200 / 255.0, 200 / 255.0 };
 		}
-		current_frame = (current_frame + 1) % frame_number;
-		vertexBufferSize = model.vertexs.size() * sizeof(Gear::Vertex);
+		UpdateCurrentFrame();
 	}
 
-	//void GetModelVertexAndNormal() {
-	//	std::fstream file(root_folder + "models_frame_" + std::to_string(current_frame) + ".json");
-	//	json j = json::parse(file);
-	//	auto vertexs = j["vertices"].template get<std::vector<glm::vec3>>();
-	//	//auto normals = j["normals"].template get<std::vector<glm::vec3>>();
-	//	if (model.vertexs.size() < vertexs.size()) {
-	//		model.vertexs.resize(vertexs.size());
-	//	}
-	//	std::vector<glm::vec3> normals(vertexs.size());
-	//	computeVertexNormals(vertexs, model.indexs, normals);
-	//	for (auto i{ 0 }; i < vertexs.size(); i++) {
-	//		model.vertexs[i].position = { -vertexs[i].x * 3, -vertexs[i].y * 3, vertexs[i].z * 3 };
-	//		model.vertexs[i].normal = normals[i];
-	//		model.vertexs[i].color = { 200 / 255.0, 200 / 255.0, 200 / 255.0 };
-	//	}
-	//	file.close();
-	//	current_frame = (current_frame + 1) % frame_number;
-	//	vertexBufferSize = model.vertexs.size() * sizeof(Gear::Vertex);
-	//}
-
-	inline void SetUpCopyCMD()
+	void UpdateCurrentFrame(bool force = false, int step = 1)
 	{
-		//copyCmd = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
+		if (force) {
+			current_frame = (current_frame + step + frame_number) % frame_number;
+		}
+		else if (!play_settings.pause && play_settings.speed > 0) {
+			frame_speed_count++;
+			if (frame_speed_count >= 1 / play_settings.speed) {
+				frame_speed_count = 0;
+				current_frame = (current_frame + step + frame_number) % frame_number;
+			}
+		}
 	}
 
-	void SetUpIndexBuffer() {
-		size_t indexBufferSize = model.indexs.size() * sizeof(uint32_t);
-		vulkanDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &indexStaging, indexBufferSize, model.indexs.data());
-		vulkanDevice->createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &indexBuffer, indexBufferSize);
-		VkBufferCopy copyRegion = {};
-		copyRegion.size = indexBufferSize;
-		vkCmdCopyBuffer(copyCmd, indexStaging.buffer, indexBuffer.buffer, 1, &copyRegion);
-		vulkanDevice->flushCommandBuffer(copyCmd, queue, true);
-	}
-
-	void SetUpVertexBuffer()
-	{
-		size_t vertexBufferSize = model.vertexs.size() * sizeof(Gear::Vertex);
-		vulkanDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &vertexStaging, vertexBufferSize, model.vertexs.data());
-		vulkanDevice->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vertexBuffer, vertexBufferSize);
-		VkBufferCopy copyRegion = {};
-		copyRegion.size = vertexBufferSize;
-		vkCmdCopyBuffer(copyCmd, vertexStaging.buffer, vertexBuffer.buffer, 1, &copyRegion);
-		vulkanDevice->flushCommandBuffer(copyCmd, queue, true);
-	}
-
-	void PrepareModelBuffers()
-	{
-		GetModelVertexAndNormal();
-		SetUpCopyCMD();
-		SetUpIndexBuffer();
-		SetUpVertexBuffer();
-	}
 
 	~VulkanExample()
 	{
@@ -355,10 +321,8 @@ public:
 	void PrepareSMPLModel()
 	{
 		CreateBuffers();
-		GetModelIndex();
-		GetModelVertexAndNormal();
+		GetModelIndex(); // index buffer is fixed
 		UpdateIndexBuffer();
-		UpdateVertexBuffer();
 	}
 
 	void GetSMPLModelPerFrame()
@@ -615,6 +579,7 @@ public:
 			// Vertices, indices and uniform data for all gears are stored in single buffers, so we only need to bind one buffer of each type and then index/offset into that for each separate gear
 			VkDeviceSize offsets[1] = { 0 };
 			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+			GetSMPLModelPerFrame(); // update vertex buffer data
 			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &vertexBuffer.buffer, offsets);
 			//UpdateVertexBuffer();
 			vkCmdBindIndexBuffer(drawCmdBuffers[i], indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
@@ -625,7 +590,6 @@ public:
 				vkCmdDrawIndexed(drawCmdBuffers[i], gears[j].indexCount, 1, gears[j].indexStart, 0, j);
 			}
 
-			GetSMPLModelPerFrame();
 
 			drawUI(drawCmdBuffers[i]);
 
@@ -694,6 +658,28 @@ public:
 		updateUniformBuffers();
 		buildCommandBuffers();
 		draw();
+	}
+
+	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
+	{
+		if (overlay->header("Settings")) {
+			overlay->checkBox("Pause", &play_settings.pause);
+			if (overlay->button("Next frame")) {
+				UpdateCurrentFrame(true);
+			}
+			if (overlay->button("Previous frame")) {
+				UpdateCurrentFrame(true, -1);
+			}
+			overlay->sliderInt("Frames", &current_frame, 0, frame_number - 1);
+			overlay->sliderFloat("Speed Slider", &play_settings.speed, 0, 1);
+			if (overlay->inputFloat("Speed Input", &play_settings.speed, 0.001, 3)) {
+				if (play_settings.speed < 0)
+					play_settings.speed = 0;
+				if (play_settings.speed > 1)
+					play_settings.speed = 1;
+			}
+
+		}
 	}
 
 };
