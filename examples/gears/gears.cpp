@@ -229,6 +229,7 @@ public:
 	size_t vertexBufferSize;
 	size_t indexBufferSize;
 	VkCommandBuffer copyCmd;
+	std::ifstream vertex_file;
 
 	VulkanExample() : VulkanExampleBase()
 	{
@@ -242,6 +243,7 @@ public:
 		// Get model info
 		SetUpFrameNumber();
 		GetModelIndex();
+		vertex_file.open(root_folder + "vertices.bin", std::ios::binary);
 		GetModelVertexAndNormal();
 	}
 
@@ -249,25 +251,26 @@ public:
 		std::fstream file(root_folder + "config.json");
 		json j = json::parse(file);
 		j["frame_number"].get_to(frame_number);
+		model.vertexs.resize(j["vertex_count"].template get<uint64_t>());
+		model.indexs.resize(j["index_count"].template get<uint64_t>());
 		file.close();
 	}
 
 	inline void GetModelIndex()
 	{
-		std::fstream file(root_folder + "faces.json");
-		json j = json::parse(file);
-		j["faces"].get_to(model.indexs);
-		file.close();
+		std::ifstream index_file(root_folder + "index.bin", std::ios::binary);
+		if (index_file.is_open()) {
+			index_file.read(reinterpret_cast<char*>(model.indexs.data()), model.indexs.size() * sizeof(uint32_t));
+		}
+		index_file.close();
 		indexBufferSize = model.indexs.size() * sizeof(uint32_t);
 	}
 
 	void GetModelVertexAndNormal() {
-		std::fstream file(root_folder + "models_frame_" + std::to_string(current_frame) + ".json");
-		json j = json::parse(file);
-		auto vertexs = j["vertices"].template get<std::vector<glm::vec3>>();
-		//auto normals = j["normals"].template get<std::vector<glm::vec3>>();
-		if (model.vertexs.size() < vertexs.size()) {
-			model.vertexs.resize(vertexs.size());
+		std::vector<glm::vec3> vertexs(model.vertexs.size());
+		vertex_file.seekg(current_frame * model.vertexs.size() * sizeof(float) * 3, std::ios::beg);
+		if (vertex_file.is_open()) {
+			vertex_file.read(reinterpret_cast<char*>(vertexs.data()), model.vertexs.size() * sizeof(float) * 3);
 		}
 		std::vector<glm::vec3> normals(vertexs.size());
 		computeVertexNormals(vertexs, model.indexs, normals);
@@ -276,10 +279,29 @@ public:
 			model.vertexs[i].normal = normals[i];
 			model.vertexs[i].color = { 200 / 255.0, 200 / 255.0, 200 / 255.0 };
 		}
-		file.close();
 		current_frame = (current_frame + 1) % frame_number;
 		vertexBufferSize = model.vertexs.size() * sizeof(Gear::Vertex);
 	}
+
+	//void GetModelVertexAndNormal() {
+	//	std::fstream file(root_folder + "models_frame_" + std::to_string(current_frame) + ".json");
+	//	json j = json::parse(file);
+	//	auto vertexs = j["vertices"].template get<std::vector<glm::vec3>>();
+	//	//auto normals = j["normals"].template get<std::vector<glm::vec3>>();
+	//	if (model.vertexs.size() < vertexs.size()) {
+	//		model.vertexs.resize(vertexs.size());
+	//	}
+	//	std::vector<glm::vec3> normals(vertexs.size());
+	//	computeVertexNormals(vertexs, model.indexs, normals);
+	//	for (auto i{ 0 }; i < vertexs.size(); i++) {
+	//		model.vertexs[i].position = { -vertexs[i].x * 3, -vertexs[i].y * 3, vertexs[i].z * 3 };
+	//		model.vertexs[i].normal = normals[i];
+	//		model.vertexs[i].color = { 200 / 255.0, 200 / 255.0, 200 / 255.0 };
+	//	}
+	//	file.close();
+	//	current_frame = (current_frame + 1) % frame_number;
+	//	vertexBufferSize = model.vertexs.size() * sizeof(Gear::Vertex);
+	//}
 
 	inline void SetUpCopyCMD()
 	{
@@ -327,6 +349,7 @@ public:
 			vertexBuffer.destroy();
 			uniformBuffer.destroy();
 		}
+		vertex_file.close();
 	}
 
 	void PrepareSMPLModel()
