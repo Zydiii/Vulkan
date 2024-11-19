@@ -39,17 +39,21 @@ glm::vec3 computeFaceNormal(const glm::vec3& v0, const glm::vec3& v1, const glm:
 	return normal;
 }
 
-void computeVertexNormals(const std::vector<glm::vec3>& vertices, const std::vector<glm::ivec3>& faces, std::vector<glm::vec3>& normals) {
+void computeVertexNormals(const std::vector<glm::vec3>& vertices, const std::vector<uint32_t>& faces, std::vector<glm::vec3>& normals) {
 	normals.resize(vertices.size(), glm::vec3(0.0f));
 	std::vector<int> count(vertices.size(), 0);
 
-	for (const auto& face : faces) {
-		glm::vec3 normal = computeFaceNormal(vertices[face[0]], vertices[face[1]], vertices[face[2]]);
-		for (int i = 0; i < 3; ++i) {
-			normals[face[i]] += normal;
-			count[face[i]]++;
-		}
+	for (auto i{ 0 }; i < faces.size(); i += 3) {
+		auto index0 = faces[i], index1 = faces[i + 1], index2 = faces[i + 2];
+		glm::vec3 normal = computeFaceNormal(vertices[index0], vertices[index1], vertices[index2]);
+		normals[index0] += normal;
+		normals[index1] += normal;
+		normals[index2] += normal;
+		count[index0]++;
+		count[index1]++;
+		count[index2]++;
 	}
+
 
 	for (size_t i = 0; i < normals.size(); ++i) {
 		if (count[i] > 0) {
@@ -83,10 +87,6 @@ namespace glm {
 
 
 } // namespace ns
-
-size_t current_frame = 0;
-
-std::vector<std::vector<glm::vec3>> vertexs;
 
 
 
@@ -149,7 +149,7 @@ public:
 		std::vector<float> color = { 200 / 255.0, 200 / 255.0, 200 / 255.0 };
 
 		std::vector<glm::vec3> normals;
-		computeVertexNormals(vertexs, faces, normals);
+		//computeVertexNormals(vertexs, faces, normals);
 
 		glm::vec3 normal;
 
@@ -175,7 +175,7 @@ public:
 
 		size_t index = 0;
 		for (auto& v : vertexs) {
-			normal = normals[index];
+			//normal = normals[index];
 			addVertex(v[0], v[1], v[2], normal);
 			index++;
 		}
@@ -333,6 +333,8 @@ public:
 	SMPLModel model;
 	vks::Buffer indexStaging;
 	vks::Buffer vertexStaging;
+	size_t vertexBufferSize;
+	size_t indexBufferSize;
 	VkCommandBuffer copyCmd;
 
 	VulkanExample() : VulkanExampleBase()
@@ -346,7 +348,7 @@ public:
 
 		// Get model info
 		SetUpFrameNumber();
-		SetUpModelFaces();
+		GetModelIndex();
 		GetModelVertexAndNormal();
 	}
 
@@ -357,12 +359,13 @@ public:
 		file.close();
 	}
 
-	inline void SetUpModelFaces()
+	inline void GetModelIndex()
 	{
 		std::fstream file(root_folder + "faces.json");
 		json j = json::parse(file);
 		j["faces"].get_to(model.indexs);
 		file.close();
+		indexBufferSize = model.indexs.size() * sizeof(uint32_t);
 	}
 
 	void GetModelVertexAndNormal() {
@@ -373,13 +376,16 @@ public:
 		if (model.vertexs.size() < vertexs.size()) {
 			model.vertexs.resize(vertexs.size());
 		}
+		computeVertexNormals(vertexs, model.indexs, normals);
 		for (auto i{ 0 }; i < vertexs.size(); i++) {
 			model.vertexs[i].position = vertexs[i];
-			model.vertexs[i].normal = normals[i];
+			//model.vertexs[i].normal = normals[i];
+			model.vertexs[i].normal = { 0, 0, 1 };
 			model.vertexs[i].color = { 200 / 255.0, 200 / 255.0, 200 / 255.0 };
 		}
 		file.close();
 		current_frame = (current_frame + 1) % frame_number;
+		vertexBufferSize = model.vertexs.size() * sizeof(Gear::Vertex);
 	}
 
 	inline void SetUpCopyCMD()
@@ -416,11 +422,6 @@ public:
 		SetUpVertexBuffer();
 	}
 
-	void UpdateVertexBuffer() {
-		GetModelVertexAndNormal();
-		SetUpVertexBuffer();
-	}
-
 	~VulkanExample()
 	{
 		if (device) {
@@ -435,8 +436,50 @@ public:
 		}
 	}
 
+	void PrepareSMPLModel()
+	{
+		CreateBuffers();
+		GetModelIndex();
+		GetModelVertexAndNormal();
+		UpdateIndexBuffer();
+		UpdateVertexBuffer();
+	}
+
+	void CreateBuffers()
+	{
+		gears.resize(1);
+		vulkanDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &vertexStaging, vertexBufferSize);
+		vulkanDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &indexStaging, indexBufferSize);
+		vulkanDevice->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vertexBuffer, vertexBufferSize);
+		vulkanDevice->createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &indexBuffer, indexBufferSize);
+	}
+
+	void UpdateIndexBuffer()
+	{
+		VK_CHECK_RESULT(indexStaging.map());
+		indexStaging.copyTo(model.indexs.data(), indexBufferSize);
+		indexStaging.unmap();
+
+		VkBufferCopy copyRegion = {};
+		copyRegion.size = indexBufferSize;
+		vulkanDevice->copyBuffer(&indexStaging, &indexBuffer, queue, &copyRegion);
+	}
+
+	void UpdateVertexBuffer()
+	{
+		VK_CHECK_RESULT(vertexStaging.map());
+		vertexStaging.copyTo(model.vertexs.data(), vertexBufferSize);
+		vertexStaging.unmap();
+
+		VkBufferCopy copyRegion = {};
+		copyRegion.size = vertexBufferSize;
+		vulkanDevice->copyBuffer(&vertexStaging, &vertexBuffer, queue, &copyRegion);
+	}
+
 	void prepareGears()
 	{
+		CreateBuffers();
+
 		// Set up three differntly shaped and colored gears
 		std::vector<GearDefinition> gearDefinitions(1);
 
@@ -482,12 +525,13 @@ public:
 		// Fills the vertex and index buffers for each of the gear
 		gears.resize(gearDefinitions.size());
 		for (int32_t i = 0; i < gears.size(); i++) {
+			//gears[i].generate(gearDefinitions[i], model.vertexs, model.indexs);
 			gears[i].generate(gearDefinitions[i], vertices, indices);
 		}
 
 		// Create buffers and stage to device for performances
-		size_t vertexBufferSize = vertices.size() * sizeof(Gear::Vertex);
-		size_t indexBufferSize = indices.size() * sizeof(uint32_t);
+		//size_t vertexBufferSize = vertices.size() * sizeof(Gear::Vertex);
+		//size_t indexBufferSize = indices.size() * sizeof(uint32_t);
 
 		//vks::Buffer vertexStaging, indexStaging;
 
@@ -510,27 +554,22 @@ public:
 		vertexStaging.destroy();
 		indexStaging.destroy();*/
 
-		vulkanDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &vertexStaging, vertexBufferSize);
+		/*vulkanDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &vertexStaging, vertexBufferSize);
 		vulkanDevice->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &indexStaging, indexBufferSize);
 		vulkanDevice->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vertexBuffer, vertexBufferSize);
-		vulkanDevice->createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &indexBuffer, indexBufferSize);
+		vulkanDevice->createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &indexBuffer, indexBufferSize);*/
 
-		VK_CHECK_RESULT(indexStaging.map());
-		indexStaging.copyTo(indices.data(), indexBufferSize);
-		indexStaging.unmap();
+		UpdateIndexBuffer();
+		UpdateVertexBuffer();
 
-		VK_CHECK_RESULT(vertexStaging.map());
-		vertexStaging.copyTo(vertices.data(), vertexBufferSize);
-		vertexStaging.unmap();
+		//VK_CHECK_RESULT(vertexStaging.map());
+		////vertexStaging.copyTo(model.vertexs.data(), vertexBufferSize);
+		//vertexStaging.copyTo(model.vertexs.data(), vertexBufferSize);
+		//vertexStaging.unmap();
 
-		VkBufferCopy copyRegion = {};
-		copyRegion.size = indexBufferSize;
-		VkCommandBuffer copyCmd = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
-		vulkanDevice->copyBuffer(&indexStaging, &indexBuffer, queue, &copyRegion);
-
-		/*vkMapMemory(device, indexBuffer.memory, 0, sizeof(vertices[0]) * vertices.size(), 0, &data);
-		memcpy(data, vertices.data(), vertexBufferSize);
-		vkUnmapMemory(device, indexBuffer.memory);*/
+		//VkBufferCopy copyRegion = {};
+		//copyRegion.size = vertexBufferSize;
+		//vulkanDevice->copyBuffer(&vertexStaging, &vertexBuffer, queue, &copyRegion);
 	}
 
 	void setupDescriptors()
@@ -704,6 +743,7 @@ public:
 	{
 		VulkanExampleBase::prepare();
 		//PrepareModelBuffers();
+		//PrepareSMPLModel();
 		prepareGears();
 		prepareUniformBuffers();
 		setupDescriptors();
