@@ -17,53 +17,34 @@
 
 #include "vulkanexamplebase.h"
 
-std::string root_folder = "C:\\smpl_model\\";
+#if defined(_WIN32)
+const std::string default_root_folder = "C:\\smpl_model\\";
+#elif defined(VK_USE_PLATFORM_ANDROID_KHR)
+const std::string default_root_folder = "/data/local/tmp";
+#endif
+
+std::string root_folder = default_root_folder;
 std::string config_filename = root_folder + "config.json";
 std::string index_filename = root_folder + "index.bin";
 std::string vertex_filename = root_folder + "vertices.bin";
-
+float human_color[3] = { 200.f / 255.0f, 200.f / 255.0f, 200.f / 255.0f };
 
 using json = nlohmann::json;
 
-namespace glm {
-	void to_json(json& j, const glm::ivec3& vec) {
-		j = json{ vec.x,vec.y, vec.z };
-	}
-
-	void from_json(const json& j, glm::ivec3& vec) {
-		j[0].get_to(vec.x);
-		j[1].get_to(vec.y);
-		j[2].get_to(vec.z);
-	}
-
-	void to_json(json& j, const glm::vec3& vec) {
-		j = json{ vec.x,vec.y, vec.z };
-	}
-
-	void from_json(const json& j, glm::vec3& vec) {
-		j[0].get_to(vec.x);
-		j[1].get_to(vec.y);
-		j[2].get_to(vec.z);
-	}
-
-
-} // namespace ns
-
-
-glm::vec3 computeFaceNormal(const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2) {
+glm::vec3 ComputeFaceNormal(const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2) {
 	glm::vec3 edge1 = v1 - v0;
 	glm::vec3 edge2 = v2 - v0;
 	glm::vec3 normal = glm::normalize(glm::cross(edge1, edge2));
 	return normal;
 }
 
-void computeVertexNormals(const std::vector<glm::vec3>& vertices, const std::vector<uint32_t>& faces, std::vector<glm::vec3>& normals) {
+void ComputeVertexNormals(const std::vector<glm::vec3>& vertices, const std::vector<uint32_t>& faces, std::vector<glm::vec3>& normals) {
 	normals.resize(vertices.size(), glm::vec3(0.0f));
 	std::vector<int> count(vertices.size(), 0);
 
 	for (auto i{ 0 }; i < faces.size(); i += 3) {
 		auto index0 = faces[i], index1 = faces[i + 1], index2 = faces[i + 2];
-		glm::vec3 normal = computeFaceNormal(vertices[index0], vertices[index1], vertices[index2]);
+		glm::vec3 normal = ComputeFaceNormal(vertices[index0], vertices[index1], vertices[index2]);
 		normals[index0] += normal;
 		normals[index1] += normal;
 		normals[index2] += normal;
@@ -106,7 +87,7 @@ public:
 		GetVertexInfo(); // get vertex count and size
 		CreateBuffers(); // create buffer based on size
 		UpdateIndexBuffer(); // index buffer is fixed
-		vertex_binary_file_.open(vertex_filename); // open the file to prepare to read
+		vertex_binary_file_.open(vertex_filename, std::ios::binary); // open the file to prepare to read
 	}
 
 	~SMPLModel()
@@ -131,11 +112,11 @@ public:
 		{
 			vertex_binary_file_.seekg(current_frame * vertex_binary_size, std::ios::beg);
 			vertex_binary_file_.read(reinterpret_cast<char*>(vertexs.data()), vertex_binary_size);
-			computeVertexNormals(vertexs, indexs, normals);
+			ComputeVertexNormals(vertexs, indexs_, normals);
 			for (auto i{ 0 }; i < vertexs.size(); i++) {
 				model_vertexs[i].position = { vertexs[i].x , vertexs[i].y , vertexs[i].z };
 				model_vertexs[i].normal = normals[i];
-				model_vertexs[i].color = { color[0], color[1], color[2] };
+				model_vertexs[i].color = { human_color[0], human_color[1], human_color[2] };
 			}
 
 			UpdateVertexBuffer(model_vertexs);
@@ -151,12 +132,11 @@ public:
 		// Render model
 		uint32_t index = 0;
 		for (auto& primitive : mesh_.primitives) {
+			vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &matrix_);
 			vkCmdDrawIndexed(commandBuffer, primitive.indexCount, 1, primitive.firstIndex, 0, index);
 		}
 	}
 
-	std::vector<Vertex> vertexs;
-	std::vector<uint32_t> indexs;
 
 private:
 	void GetVertexInfo() {
@@ -167,12 +147,12 @@ private:
 		index_buffer_size_ = index_count_ * sizeof(uint32_t);
 		vertex_buffer_size_ = vertex_count_ * sizeof(Vertex);
 		file.close();
-		indexs.resize(index_count_);
+		indexs_.resize(index_count_);
 
 		// mesh data
 		mesh_.primitives.resize(1); // TODO: fix to 1 now
 		mesh_.primitives[0].firstIndex = 0;
-		mesh_.primitives[0].indexCount = vertex_count_;
+		mesh_.primitives[0].indexCount = index_count_;
 	}
 
 	void CreateBuffers()
@@ -188,12 +168,12 @@ private:
 	{
 		std::ifstream index_file(root_folder + "index.bin", std::ios::binary);
 		if (index_file.is_open()) {
-			index_file.read(reinterpret_cast<char*>(indexs.data()), index_buffer_size_);
+			index_file.read(reinterpret_cast<char*>(indexs_.data()), index_buffer_size_);
 		}
 		index_file.close();
 
 		VK_CHECK_RESULT(index_staging_buffer_.map());
-		index_staging_buffer_.copyTo(indexs.data(), index_buffer_size_);
+		index_staging_buffer_.copyTo(indexs_.data(), index_buffer_size_);
 		index_staging_buffer_.unmap();
 
 		VkBufferCopy copyRegion = {};
@@ -219,130 +199,14 @@ private:
 	vks::Buffer index_buffer_; // index data from smpl.faces
 	vks::Buffer index_staging_buffer_;
 	Mesh mesh_; // Here we have only one primitive
-	glm::mat4 matrix_; // model trans matrix
+	std::vector<uint32_t> indexs_; // index is fixed
+	glm::mat4 matrix_{ glm::mat4(1) }; // model trans matrix
 	uint64_t vertex_count_;
-	uint64_t index_count_;
+	uint32_t index_count_;
 	size_t vertex_buffer_size_;
 	size_t index_buffer_size_;
 	std::ifstream vertex_binary_file_;
-	float color[3];
 };
-
-
-const uint32_t numGears = 1;
-
-// Used for passing the definition of a gear during construction
-struct GearDefinition {
-	float innerRadius;
-	float outerRadius;
-	float width;
-	int numTeeth;
-	float toothDepth;
-	glm::vec3 color;
-	glm::vec3 pos;
-	float rotSpeed;
-	float rotOffset;
-};
-
-
-
-/*
- * Gear
- * This class contains the properties of a single gear and a function to generate vertices and indices
- */
-class Gear
-{
-public:
-	// Definition for the vertex data used to render the gears
-
-
-	glm::vec3 color;
-	glm::vec3 pos;
-	float rotSpeed{ 0.0f };
-	float rotOffset{ 0.0f };
-	// These are used at draw time to offset into the single buffers
-	uint32_t indexCount{ 0 };
-	uint32_t indexStart{ 0 };
-
-	struct Vertex {
-		glm::vec3 position;
-		glm::vec3 normal;
-		glm::vec3 color;
-	};
-
-
-
-
-	// Generates the indices and vertices for this gear
-	// They are added to the vertex and index buffers passed into the function
-	// This way we can put all gears into single vertex and index buffers instead of having to allocate single buffers for each gear (which would be bad practice)
-	void generate(GearDefinition& gearDefinition, std::vector<Vertex>& vertexBuffer, std::vector<uint32_t>& indexBuffer) {
-		this->color = gearDefinition.color;
-		this->pos = gearDefinition.pos;
-		this->rotOffset = gearDefinition.rotOffset;
-		this->rotSpeed = gearDefinition.rotSpeed;
-
-		int i;
-		float r0, r1, r2;
-		float ta, da;
-		float u1, v1, u2, v2, len;
-		float cos_ta, cos_ta_1da, cos_ta_2da, cos_ta_3da, cos_ta_4da;
-		float sin_ta, sin_ta_1da, sin_ta_2da, sin_ta_3da, sin_ta_4da;
-		int32_t ix0, ix1, ix2, ix3, ix4, ix5;
-
-		// We need to know where this triangle's indices start within the single index buffer
-		indexStart = static_cast<uint32_t>(indexBuffer.size());
-
-		r0 = gearDefinition.innerRadius;
-		r1 = gearDefinition.outerRadius - gearDefinition.toothDepth / 2.0f;
-		r2 = gearDefinition.outerRadius + gearDefinition.toothDepth / 2.0f;
-		da = static_cast <float>(2.0 * M_PI / gearDefinition.numTeeth / 4.0);
-
-		const std::string file_name = "C:\\smpl_data.json";
-		std::ifstream f(file_name);
-		json data = json::parse(f);
-
-		auto vertexs = data["output_vertices"].template get<std::vector<glm::vec3>>();
-		auto faces = data["smpl_faces"].template get<std::vector<glm::ivec3>>();
-		std::vector<float> color = { 200 / 255.0, 200 / 255.0, 200 / 255.0 };
-
-		std::vector<glm::vec3> normals;
-		//computeVertexNormals(vertexs, faces, normals);
-
-		glm::vec3 normal;
-
-		// Use lambda functions to simplify vertex and face creation
-		auto addFace = [&indexBuffer](int a, int b, int c) {
-			indexBuffer.push_back(a);
-			indexBuffer.push_back(b);
-			indexBuffer.push_back(c);
-			};
-
-		for (auto& f : faces) {
-			addFace(f[0], f[1], f[2]);
-		}
-
-		auto addVertex = [this, &vertexBuffer](float x, float y, float z, glm::vec3 normal) {
-			Vertex v{};
-			v.position = { x, y, z };
-			v.normal = normal;
-			v.color = this->color;
-			vertexBuffer.push_back(v);
-			return static_cast<int32_t>(vertexBuffer.size()) - 1;
-			};
-
-		size_t index = 0;
-		for (auto& v : vertexs) {
-			//normal = normals[index];
-			addVertex(v[0], v[1], v[2], normal);
-			index++;
-		}
-
-		// We need to know how many indices this triangle has at draw time
-		indexCount = static_cast<uint32_t>(indexBuffer.size()) - indexStart;
-	}
-};
-
 
 /*
  * VulkanExample
@@ -358,15 +222,11 @@ public:
 	// Even though this sample renders multiple objects (gears), we only use single buffers
 	// This is a best practices and Vulkan applications should keep the number of memory allocations as small as possible
 	// Having as little buffers as possible also reduces the number of buffer binds
-	vks::Buffer vertexBuffer;
-	vks::Buffer indexBuffer;
 	struct UniformData
 	{
 		glm::mat4 projection;
 		glm::mat4 view;
 		glm::vec4 lightPos;
-		// The model matrix is used to rotate a given gear, so we have one mat4 per gear
-		glm::mat4 model[numGears];
 	} uniformData;
 	vks::Buffer uniformBuffer;
 
@@ -381,17 +241,10 @@ public:
 	} play_settings;
 
 	bool wireframe = false;
-	uint64_t frame_number;
+	int frame_number_{ 0 };
 	int current_frame{ 0 };
 	uint32_t frame_speed_count = 0;
-	std::unique_ptr<SMPLModel> model;
-	vks::Buffer indexStaging;
-	vks::Buffer vertexStaging;
-	size_t vertexBufferSize;
-	size_t indexBufferSize;
-	VkCommandBuffer copyCmd;
-	float color[3] = { 200.f / 255.0, 200.f / 255.0, 200.f / 255.0 };
-	std::ifstream vertex_file;
+	std::vector<std::unique_ptr<SMPLModel>> models_;
 
 	VulkanExample() : VulkanExampleBase()
 	{
@@ -401,54 +254,35 @@ public:
 		camera.setPosition(glm::vec3(0.0f, 0.0f, -3.0f));
 		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
 		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);
+
+		commandLineParser.add("root_folder", { "--root-folder" }, 1, "Root folder of smpl model");
+		commandLineParser.parse(args);
+		if (commandLineParser.isSet("root_folder")) {
+			root_folder = commandLineParser.getValueAsString("root_folder", default_root_folder);
+		}
 	}
 
 	void SetUpFrameNumber()
 	{
 		std::fstream file(root_folder + "config.json");
 		json j = json::parse(file);
-		j["frame_number"].get_to(frame_number);
+		j["frame_number"].get_to(frame_number_);
 		file.close();
-	}
-
-
-	void GetModelVertexAndNormal() {
-		std::vector<glm::vec3> vertexs(model->vertexs.size());
-		vertex_file.seekg(current_frame * model->vertexs.size() * sizeof(float) * 3, std::ios::beg);
-		if (vertex_file.is_open()) {
-			vertex_file.read(reinterpret_cast<char*>(vertexs.data()), model->vertexs.size() * sizeof(float) * 3);
-		}
-		std::vector<glm::vec3> normals(vertexs.size());
-		computeVertexNormals(vertexs, model->indexs, normals);
-		glm::mat4 flipZ = glm::mat4(1.0f);
-		flipZ[2][2] = -1.0f;
-		glm::mat3 normalMatrix = glm::mat3(flipZ);
-		for (auto i{ 0 }; i < vertexs.size(); i++) {
-			glm::vec4 pos = glm::vec4(vertexs[i], 1.0f);
-			pos = flipZ * pos;
-			model->vertexs[i].position = glm::vec3(pos);
-			model->vertexs[i].position = { vertexs[i].x , vertexs[i].y , vertexs[i].z };
-			model->vertexs[i].normal = glm::normalize(normalMatrix * normals[i]);
-			model->vertexs[i].normal = normals[i];
-			model->vertexs[i].color = { color[0], color[1], color[2] };
-		}
-		UpdateCurrentFrame();
 	}
 
 	void UpdateCurrentFrame(bool force = false, int step = 1)
 	{
 		if (force) {
-			current_frame = (current_frame + step + frame_number) % frame_number;
+			current_frame = (current_frame + step + frame_number_) % frame_number_;
 		}
 		else if (!play_settings.pause && play_settings.speed > 0) {
 			frame_speed_count++;
 			if (frame_speed_count >= 1 / play_settings.speed) {
 				frame_speed_count = 0;
-				current_frame = (current_frame + step + frame_number) % frame_number;
+				current_frame = (current_frame + step + frame_number_) % frame_number_;
 			}
 		}
 	}
-
 
 	~VulkanExample()
 	{
@@ -460,18 +294,13 @@ public:
 			}
 			vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 			vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-			vertexStaging.destroy();
-			indexStaging.destroy();
-			indexBuffer.destroy();
-			vertexBuffer.destroy();
 			uniformBuffer.destroy();
 		}
-		vertex_file.close();
 	}
 
 	void PrepareSMPLModel()
 	{
-		model = std::make_unique<SMPLModel>(vulkanDevice, queue);
+		models_.push_back(std::make_unique<SMPLModel>(vulkanDevice, queue));
 	}
 
 	void setupDescriptors()
@@ -482,7 +311,7 @@ public:
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1),
 		};
-		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, static_cast<uint32_t>(numGears));
+		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, static_cast<uint32_t>(models_.size()));
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
 
 		// Layout
@@ -505,6 +334,11 @@ public:
 	{
 		// Layout
 		VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayout, 1);
+		// We will use push constants to push the local matrices of a primitive to the vertex shader
+		VkPushConstantRange pushConstantRange = vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, sizeof(glm::mat4), 0);
+		// Push constant ranges are part of the pipeline layout
+		pipelineLayoutCreateInfo.pushConstantRangeCount = 1;
+		pipelineLayoutCreateInfo.pPushConstantRanges = &pushConstantRange;
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayout));
 
 		//  Pipelines
@@ -522,17 +356,17 @@ public:
 		// Load shaders
 		std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages;
 
-		shaderStages[0] = loadShader(getShadersPath() + "gears/gears.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "gears/gears.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		shaderStages[0] = loadShader(getShadersPath() + "smplloading/smplloading.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "smplloading/smplloading.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 
 		// Vertex bindings and attributes to match the vertex buffers storing the vertices for the gears
 		VkVertexInputBindingDescription vertexInputBinding = {
-			vks::initializers::vertexInputBindingDescription(0, sizeof(Gear::Vertex), VK_VERTEX_INPUT_RATE_VERTEX)
+			vks::initializers::vertexInputBindingDescription(0, sizeof(SMPLModel::Vertex), VK_VERTEX_INPUT_RATE_VERTEX)
 		};
 		std::vector<VkVertexInputAttributeDescription> vertexInputAttributes = {
-			vks::initializers::vertexInputAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Gear::Vertex, position)),	// Location 0 : Position
-			vks::initializers::vertexInputAttributeDescription(0, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Gear::Vertex, normal)),	// Location 1 : Normal
-			vks::initializers::vertexInputAttributeDescription(0, 2, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Gear::Vertex, color)),	// Location 2 : Color
+			vks::initializers::vertexInputAttributeDescription(0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SMPLModel::Vertex, position)),	// Location 0 : Position
+			vks::initializers::vertexInputAttributeDescription(0, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SMPLModel::Vertex, normal)),	// Location 1 : Normal
+			vks::initializers::vertexInputAttributeDescription(0, 2, VK_FORMAT_R32G32B32_SFLOAT, offsetof(SMPLModel::Vertex, color)),	// Location 2 : Color
 		};
 		VkPipelineVertexInputStateCreateInfo vertexInputStateCI = vks::initializers::pipelineVertexInputStateCreateInfo();
 		vertexInputStateCI.vertexBindingDescriptionCount = 1;
@@ -585,7 +419,8 @@ public:
 		renderPassBeginInfo.clearValueCount = 2;
 		renderPassBeginInfo.pClearValues = clearValues;
 
-		model->LoadVertexData(current_frame); // update vertex buffer data
+		for (auto& model : models_)
+			model->LoadVertexData(current_frame); // update vertex buffer data
 
 		for (int32_t i = 0; i < drawCmdBuffers.size(); ++i)
 		{
@@ -607,16 +442,8 @@ public:
 			// Vertices, indices and uniform data for all gears are stored in single buffers, so we only need to bind one buffer of each type and then index/offset into that for each separate gear
 			VkDeviceSize offsets[1] = { 0 };
 			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
-			model->Draw(drawCmdBuffers[i], pipelineLayout);
-			//vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &vertexBuffer.buffer, offsets);
-			//vkCmdBindIndexBuffer(drawCmdBuffers[i], indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-			//for (auto j = 0; j < numGears; j++) {
-			//	// We use the instance index (last argument) to pass the index of the triangle to the shader
-			//	// With this we can index into the model matrices array of the uniform buffer like this (see gears.vert):
-			//	// ubo.model[gl_InstanceIndex];
-			//	vkCmdDrawIndexed(drawCmdBuffers[i], gears[j].indexCount, 1, gears[j].indexStart, 0, j);
-			//}
-
+			for (auto& model : models_)
+				model->Draw(drawCmdBuffers[i], pipelineLayout);
 
 			drawUI(drawCmdBuffers[i]);
 
@@ -674,6 +501,7 @@ public:
 		updateUniformBuffers();
 		buildCommandBuffers();
 		draw();
+		UpdateCurrentFrame();
 	}
 
 	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
@@ -686,16 +514,16 @@ public:
 			if (overlay->button("Previous frame")) {
 				UpdateCurrentFrame(true, -1);
 			}
-			overlay->sliderInt("Frame Slider", &current_frame, 0, frame_number - 1);
+			overlay->sliderInt("Frame Slider", &current_frame, 0, frame_number_ - 1);
 			overlay->sliderFloat("Speed Slider", &play_settings.speed, 0, 1);
-			if (overlay->inputFloat("Speed Input", &play_settings.speed, 0.001, 3)) {
+			if (overlay->inputFloat("Speed Input", &play_settings.speed, 0.001f, 3)) {
 				if (play_settings.speed < 0)
 					play_settings.speed = 0;
 				if (play_settings.speed > 1)
 					play_settings.speed = 1;
 			}
 			overlay->colorPicker("Background Color", defaultClearColor.float32);
-			overlay->colorPicker("Human Color", color);
+			overlay->colorPicker("Human Color", human_color);
 			if (overlay->checkBox("Wireframe", &wireframe)) {
 				buildCommandBuffers();
 			}
