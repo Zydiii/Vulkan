@@ -17,20 +17,38 @@
 
 #include "vulkanexamplebase.h"
 
-const uint32_t numGears = 1;
+std::string root_folder = "C:\\dump_model\\";
+std::string config_filename = root_folder + "config.json";
+std::string index_filename = root_folder + "index.bin";
+std::string vertex_filename = root_folder + "vertices.bin";
 
-// Used for passing the definition of a gear during construction
-struct GearDefinition {
-	float innerRadius;
-	float outerRadius;
-	float width;
-	int numTeeth;
-	float toothDepth;
-	glm::vec3 color;
-	glm::vec3 pos;
-	float rotSpeed;
-	float rotOffset;
-};
+
+using json = nlohmann::json;
+
+namespace glm {
+	void to_json(json& j, const glm::ivec3& vec) {
+		j = json{ vec.x,vec.y, vec.z };
+	}
+
+	void from_json(const json& j, glm::ivec3& vec) {
+		j[0].get_to(vec.x);
+		j[1].get_to(vec.y);
+		j[2].get_to(vec.z);
+	}
+
+	void to_json(json& j, const glm::vec3& vec) {
+		j = json{ vec.x,vec.y, vec.z };
+	}
+
+	void from_json(const json& j, glm::vec3& vec) {
+		j[0].get_to(vec.x);
+		j[1].get_to(vec.y);
+		j[2].get_to(vec.z);
+	}
+
+
+} // namespace ns
+
 
 glm::vec3 computeFaceNormal(const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2) {
 	glm::vec3 edge1 = v1 - v0;
@@ -62,31 +80,140 @@ void computeVertexNormals(const std::vector<glm::vec3>& vertices, const std::vec
 	}
 }
 
-using json = nlohmann::json;
+class SMPLModel {
 
-namespace glm {
-	void to_json(json& j, const glm::ivec3& vec) {
-		j = json{ vec.x,vec.y, vec.z };
+public:
+	// The vertex layout for the model
+	struct Vertex {
+		glm::vec3 position;
+		glm::vec3 normal;
+		glm::vec3 color;
+	};
+
+	// A primitive contains the data for a single draw call
+	struct Primitive {
+		uint32_t firstIndex;
+		uint32_t indexCount;
+	};
+
+	// Contains the node's (optional) geometry and can be made up of an arbitrary number of primitives. 
+	struct Mesh {
+		std::vector<Primitive> primitives;
+	};
+
+	SMPLModel(vks::VulkanDevice* const vulkan_device)
+	{
+		vulkan_device_ = vulkan_device;
+		GetVertexInfo();
+		CreateBuffers();
+		UpdateIndexBuffer(); // index buffer is fixed
+		vertex_binary_file_.open(vertex_filename);
 	}
 
-	void from_json(const json& j, glm::ivec3& vec) {
-		j[0].get_to(vec.x);
-		j[1].get_to(vec.y);
-		j[2].get_to(vec.z);
-	}
-
-	void to_json(json& j, const glm::vec3& vec) {
-		j = json{ vec.x,vec.y, vec.z };
-	}
-
-	void from_json(const json& j, glm::vec3& vec) {
-		j[0].get_to(vec.x);
-		j[1].get_to(vec.y);
-		j[2].get_to(vec.z);
+	~SMPLModel()
+	{
+		// free buffer
+		vertex_buffer_.destroy();
+		vertex_staging_buffer_.destroy();
+		index_buffer_.destroy();
+		index_staging_buffer_.destroy();
+		// close file
+		if (vertex_binary_file_.is_open())
+			vertex_binary_file_.close();
 	}
 
 
-} // namespace ns
+	std::vector<Vertex> vertexs;
+	std::vector<uint32_t> indexs;
+
+private:
+	void GetVertexInfo() {
+		std::fstream file(config_filename);
+		json j = json::parse(file);
+		j["vertex_count"].get_to(vertex_count_);
+		j["index_count"].get_to(index_count_);
+		index_buffer_size_ = index_count_ * sizeof(uint32_t);
+		vertex_buffer_size_ = vertex_count_ * sizeof(Vertex);
+		file.close();
+		indexs.resize(index_count_);
+	}
+
+	void CreateBuffers()
+	{
+		// create vertex and index buffer, and related staging buffer for uploading data
+		vulkan_device_->createBuffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vertex_buffer_, vertex_buffer_size_);
+		vulkan_device_->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &vertex_staging_buffer_, vertex_buffer_size_);
+		vulkan_device_->createBuffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &index_buffer_, index_buffer_size_);
+		vulkan_device_->createBuffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, &index_staging_buffer_, index_buffer_size_);
+	}
+
+	void UpdateIndexBuffer()
+	{
+		std::ifstream index_file(root_folder + "index.bin", std::ios::binary);
+		if (index_file.is_open()) {
+			index_file.read(reinterpret_cast<char*>(indexs.data()), index_buffer_size_);
+		}
+		index_file.close();
+
+		VK_CHECK_RESULT(index_staging_buffer_.map());
+		index_staging_buffer_.copyTo(indexs.data(), index_buffer_size_);
+		index_staging_buffer_.unmap();
+
+		VkBufferCopy copyRegion = {};
+		copyRegion.size = index_buffer_size_;
+		vulkan_device_->copyBuffer(&index_staging_buffer_, &index_buffer_, queue_, &copyRegion);
+	}
+
+	void GetVertexData(int current_frame)
+	{
+		std::vector<Vertex> model_vertexs(vertex_count_);
+		std::vector<glm::vec3> vertexs(vertex_count_), normals(vertex_count_);
+
+		if (vertex_binary_file_.is_open())
+		{
+			vertex_binary_file_.seekg(current_frame * vertex_buffer_size_, std::ios::beg);
+			vertex_binary_file_.read(reinterpret_cast<char*>(vertexs.data()), vertex_buffer_size_);
+			computeVertexNormals(vertexs, indexs, normals);
+			for (auto i{ 0 }; i < vertexs.size(); i++) {
+				model_vertexs[i].position = { vertexs[i].x , vertexs[i].y , vertexs[i].z };
+				model_vertexs[i].normal = normals[i];
+				model_vertexs[i].color = { color[0], color[1], color[2] };
+			}
+		}
+
+	}
+
+	vks::VulkanDevice* vulkan_device_; // to create resources
+	VkQueue queue_; // perform actions
+	vks::Buffer vertex_buffer_; // vertex data from smpl.forward
+	vks::Buffer vertex_staging_buffer_;
+	vks::Buffer index_buffer_; // index data from smpl.faces
+	vks::Buffer index_staging_buffer_;
+	Mesh mesh_; // Here we have only one primitive
+	glm::mat4 matrix_; // model trans matrix
+	uint64_t vertex_count_;
+	uint64_t index_count_;
+	size_t vertex_buffer_size_;
+	size_t index_buffer_size_;
+	std::ifstream vertex_binary_file_;
+	float color[3];
+};
+
+
+const uint32_t numGears = 1;
+
+// Used for passing the definition of a gear during construction
+struct GearDefinition {
+	float innerRadius;
+	float outerRadius;
+	float width;
+	int numTeeth;
+	float toothDepth;
+	glm::vec3 color;
+	glm::vec3 pos;
+	float rotSpeed;
+	float rotOffset;
+};
 
 
 
@@ -187,10 +314,6 @@ public:
 	}
 };
 
-struct SMPLModel {
-	std::vector<Gear::Vertex> vertexs;
-	std::vector<uint32_t> indexs;
-};
 
 /*
  * VulkanExample
@@ -220,13 +343,17 @@ public:
 	} uniformData;
 	vks::Buffer uniformBuffer;
 
+	struct Pipelines {
+		VkPipeline solid{ VK_NULL_HANDLE };
+		VkPipeline wireframe{ VK_NULL_HANDLE };
+	} pipelines;
+
 	struct PlaySettings {
 		bool pause = false;
 		float speed = 1;
 	} play_settings;
 
 	bool wireframe = false;
-	const std::string root_folder = "C:\\dump_model\\";
 	uint64_t frame_number;
 	int current_frame{ 0 };
 	uint32_t frame_speed_count = 0;
@@ -239,7 +366,7 @@ public:
 	float color[3] = { 200.f / 255.0, 200.f / 255.0, 200.f / 255.0 };
 	std::ifstream vertex_file;
 
-	VulkanExample() : VulkanExampleBase()
+	VulkanExample() : VulkanExampleBase(), model(vulkanDevice)
 	{
 		/*title = "Vulkan gears";
 		camera.type = Camera::CameraType::lookat;
@@ -332,7 +459,11 @@ public:
 	~VulkanExample()
 	{
 		if (device) {
-			vkDestroyPipeline(device, pipeline, nullptr);
+			//vkDestroyPipeline(device, pipeline, nullptr);
+			vkDestroyPipeline(device, pipelines.solid, nullptr);
+			if (pipelines.wireframe != VK_NULL_HANDLE) {
+				vkDestroyPipeline(device, pipelines.wireframe, nullptr);
+			}
 			vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 			vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 			vertexStaging.destroy();
@@ -566,10 +697,18 @@ public:
 		pipelineCreateInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
 		pipelineCreateInfo.pStages = shaderStages.data();
 
-		//rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
-		//rasterizationState.lineWidth = 1.0f;
 
-		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCreateInfo, nullptr, &pipeline));
+		//VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCreateInfo, nullptr, &pipeline));
+
+		// Solid rendering pipeline
+		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCreateInfo, nullptr, &pipelines.solid));
+
+		// Wire frame rendering pipeline
+		if (deviceFeatures.fillModeNonSolid) {
+			rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
+			rasterizationState.lineWidth = 1.0f;
+			VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCreateInfo, nullptr, &pipelines.wireframe));
+		}
 	}
 
 
@@ -607,7 +746,8 @@ public:
 			VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
 			vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
 
-			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+			//vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, wireframe ? pipelines.wireframe : pipelines.solid);
 
 			// Vertices, indices and uniform data for all gears are stored in single buffers, so we only need to bind one buffer of each type and then index/offset into that for each separate gear
 			VkDeviceSize offsets[1] = { 0 };

@@ -108,7 +108,7 @@ set(EXAMPLES
 	dynamicrendering
 	dynamicstate
 	dynamicuniformbuffer	
-	gears
+	smplloading
 	geometryshader
 	gltfloading
 	gltfscenerendering
