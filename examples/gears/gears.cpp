@@ -225,6 +225,7 @@ public:
 		float speed = 1;
 	} play_settings;
 
+	bool wireframe = false;
 	const std::string root_folder = "C:\\dump_model\\";
 	uint64_t frame_number;
 	int current_frame{ 0 };
@@ -240,11 +241,28 @@ public:
 
 	VulkanExample() : VulkanExampleBase()
 	{
-		title = "Vulkan gears";
+		/*title = "Vulkan gears";
 		camera.type = Camera::CameraType::lookat;
-		camera.setPosition(glm::vec3(0.0f, 2.5f, -16.0f));
+		camera.flipY = true;
+		camera.setPosition(glm::vec3(0.0f, 0.0f, -5.0f));
+		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));*/
+		//camera.setPerspective(60.0f, (float)width / (float)height, 0.001f, 256.0f);
+
+		/*title = "SMPL model rendering";
+		camera.type = Camera::CameraType::lookat;
+		camera.flipY = true;
+		camera.setPosition(glm::vec3(0.0f, 0.0f, -5.0f));
 		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
-		camera.setPerspective(60.0f, (float)width / (float)height, 0.001f, 256.0f);
+		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);*/
+
+		title = "glTF model rendering";
+		camera.type = Camera::CameraType::lookat;
+		camera.flipY = true;
+		camera.setPosition(glm::vec3(0.0f, 0.0f, -3.0f));
+		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
+		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);
+
+
 		timerSpeed *= 0.25f;
 
 		// Get model info
@@ -281,8 +299,15 @@ public:
 		}
 		std::vector<glm::vec3> normals(vertexs.size());
 		computeVertexNormals(vertexs, model.indexs, normals);
+		glm::mat4 flipZ = glm::mat4(1.0f);
+		flipZ[2][2] = -1.0f;
+		glm::mat3 normalMatrix = glm::mat3(flipZ);
 		for (auto i{ 0 }; i < vertexs.size(); i++) {
-			model.vertexs[i].position = { vertexs[i].x , -vertexs[i].y , vertexs[i].z };
+			glm::vec4 pos = glm::vec4(vertexs[i], 1.0f);
+			pos = flipZ * pos;
+			model.vertexs[i].position = glm::vec3(pos);
+			model.vertexs[i].position = { vertexs[i].x , vertexs[i].y , vertexs[i].z };
+			model.vertexs[i].normal = glm::normalize(normalMatrix * normals[i]);
 			model.vertexs[i].normal = normals[i];
 			model.vertexs[i].color = { color[0], color[1], color[2] };
 		}
@@ -415,6 +440,8 @@ public:
 			//gears[i].generate(gearDefinitions[i], vertices, indices);
 
 			gears[i].indexCount = model.indexs.size();
+			gears[i].pos = { 0.f, 0.f, 0.f };
+			gears[i].rotOffset = 180.0f;
 		}
 
 		// Create buffers and stage to device for performances
@@ -496,7 +523,7 @@ public:
 
 		//  Pipelines
 		VkPipelineInputAssemblyStateCreateInfo inputAssemblyState = vks::initializers::pipelineInputAssemblyStateCreateInfo(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, VK_FALSE);
-		VkPipelineRasterizationStateCreateInfo rasterizationState = vks::initializers::pipelineRasterizationStateCreateInfo(VK_POLYGON_MODE_FILL, VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_CLOCKWISE, 0);
+		VkPipelineRasterizationStateCreateInfo rasterizationState = vks::initializers::pipelineRasterizationStateCreateInfo(VK_POLYGON_MODE_FILL, VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE, 0);
 		VkPipelineColorBlendAttachmentState blendAttachmentState = vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE);
 		VkPipelineColorBlendStateCreateInfo colorBlendState = vks::initializers::pipelineColorBlendStateCreateInfo(1, &blendAttachmentState);
 		VkPipelineDepthStencilStateCreateInfo depthStencilState = vks::initializers::pipelineDepthStencilStateCreateInfo(VK_TRUE, VK_TRUE, VK_COMPARE_OP_LESS_OR_EQUAL);
@@ -539,6 +566,9 @@ public:
 		pipelineCreateInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
 		pipelineCreateInfo.pStages = shaderStages.data();
 
+		//rasterizationState.polygonMode = VK_POLYGON_MODE_LINE;
+		//rasterizationState.lineWidth = 1.0f;
+
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCreateInfo, nullptr, &pipeline));
 	}
 
@@ -561,6 +591,8 @@ public:
 		renderPassBeginInfo.clearValueCount = 2;
 		renderPassBeginInfo.pClearValues = clearValues;
 
+		GetSMPLModelPerFrame(); // update vertex buffer data
+
 		for (int32_t i = 0; i < drawCmdBuffers.size(); ++i)
 		{
 			renderPassBeginInfo.framebuffer = frameBuffers[i];
@@ -580,7 +612,6 @@ public:
 			// Vertices, indices and uniform data for all gears are stored in single buffers, so we only need to bind one buffer of each type and then index/offset into that for each separate gear
 			VkDeviceSize offsets[1] = { 0 };
 			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
-			GetSMPLModelPerFrame(); // update vertex buffer data
 			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &vertexBuffer.buffer, offsets);
 			vkCmdBindIndexBuffer(drawCmdBuffers[i], indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 			for (auto j = 0; j < numGears; j++) {
@@ -609,20 +640,21 @@ public:
 
 	void updateUniformBuffers()
 	{
-		float degree = timer * 360.0f;
+		//float degree = timer * 360.0f;
+
+		float degree = 180;
 
 		// Camera specific global matrices
 		uniformData.projection = camera.matrices.perspective;
-		//uniformData.projection[1][1] *= -1;
 		uniformData.view = camera.matrices.view;
 		uniformData.lightPos = glm::vec4(0.0f, 0.0f, 2.5f, 1.0f);
 
 		// Update the model matrix for each gear that contains it's position and rotation
 		for (auto i = 0; i < numGears; i++) {
 			Gear gear = gears[i];
-			/*uniformData.model[i] = glm::mat4(1.0f);
-			uniformData.model[i] = glm::translate(uniformData.model[i], gear.pos);
-			uniformData.model[i] = glm::rotate(uniformData.model[i], glm::radians((gear.rotSpeed * degree) + gear.rotOffset), glm::vec3(0.0f, 0.0f, 1.0f));*/
+			//uniformData.model[i] = glm::mat4(1.0f);
+			//uniformData.model[i] = glm::translate(uniformData.model[i], gear.pos);
+			//uniformData.model[i] = glm::rotate(uniformData.model[i], glm::radians(degree), glm::vec3(0.0f, 1.0f, 0.0f));
 		}
 
 		memcpy(uniformBuffer.mapped, &uniformData, sizeof(UniformData));
@@ -670,7 +702,7 @@ public:
 			if (overlay->button("Previous frame")) {
 				UpdateCurrentFrame(true, -1);
 			}
-			overlay->sliderInt("Frames", &current_frame, 0, frame_number - 1);
+			overlay->sliderInt("Frame Slider", &current_frame, 0, frame_number - 1);
 			overlay->sliderFloat("Speed Slider", &play_settings.speed, 0, 1);
 			if (overlay->inputFloat("Speed Input", &play_settings.speed, 0.001, 3)) {
 				if (play_settings.speed < 0)
@@ -680,6 +712,9 @@ public:
 			}
 			overlay->colorPicker("Background Color", defaultClearColor.float32);
 			overlay->colorPicker("Human Color", color);
+			if (overlay->checkBox("Wireframe", &wireframe)) {
+				buildCommandBuffers();
+			}
 		}
 	}
 
