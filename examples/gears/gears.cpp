@@ -235,6 +235,7 @@ public:
 	size_t vertexBufferSize;
 	size_t indexBufferSize;
 	VkCommandBuffer copyCmd;
+	float color[3] = { 200.f / 255.0, 200.f / 255.0, 200.f / 255.0 };
 	std::ifstream vertex_file;
 
 	VulkanExample() : VulkanExampleBase()
@@ -283,7 +284,7 @@ public:
 		for (auto i{ 0 }; i < vertexs.size(); i++) {
 			model.vertexs[i].position = { vertexs[i].x , -vertexs[i].y , vertexs[i].z };
 			model.vertexs[i].normal = normals[i];
-			model.vertexs[i].color = { 200 / 255.0, 200 / 255.0, 200 / 255.0 };
+			model.vertexs[i].color = { color[0], color[1], color[2] };
 		}
 		UpdateCurrentFrame();
 	}
@@ -581,7 +582,6 @@ public:
 			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
 			GetSMPLModelPerFrame(); // update vertex buffer data
 			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &vertexBuffer.buffer, offsets);
-			//UpdateVertexBuffer();
 			vkCmdBindIndexBuffer(drawCmdBuffers[i], indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 			for (auto j = 0; j < numGears; j++) {
 				// We use the instance index (last argument) to pass the index of the triangle to the shader
@@ -678,7 +678,8 @@ public:
 				if (play_settings.speed > 1)
 					play_settings.speed = 1;
 			}
-
+			overlay->colorPicker("Background Color", defaultClearColor.float32);
+			overlay->colorPicker("Human Color", color);
 		}
 	}
 
