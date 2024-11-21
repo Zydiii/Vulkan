@@ -20,7 +20,7 @@
 #if defined(_WIN32)
 const std::string default_root_folder = "C:\\smpl_model\\";
 #elif defined(VK_USE_PLATFORM_ANDROID_KHR)
-const std::string default_root_folder = "/data/local/tmp";
+const std::string default_root_folder = "/data/local/tmp/smpl_model/";
 #endif
 
 std::string root_folder = default_root_folder;
