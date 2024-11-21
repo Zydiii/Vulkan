@@ -18,6 +18,8 @@ add_subdirectory(../base ${CMAKE_SOURCE_DIR}/../base)
 
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -u ANativeActivity_onCreate")
 
+add_subdirectory(${EXTERNAL_DIR}/nlohmann ${CMAKE_SOURCE_DIR}/${EXTERNAL_DIR}/nlohmann)
+
 include_directories(${BASE_DIR})
 include_directories(${EXTERNAL_DIR})
 include_directories(${EXTERNAL_DIR}/glm)
@@ -31,4 +33,5 @@ target_link_libraries(
     android
     log
     z
+    nlohmann_json::nlohmann_json
 )

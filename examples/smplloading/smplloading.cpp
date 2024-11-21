@@ -258,7 +258,7 @@ public:
 		commandLineParser.add("root_folder", { "--root-folder" }, 1, "Root folder of smpl model");
 		commandLineParser.parse(args);
 		if (commandLineParser.isSet("root_folder")) {
-			root_folder = commandLineParser.getValueAsString("root_folder", default_root_folder);
+			root_folder = commandLineParser.getValueAsString("root_folder", default_root_folder) + "/";
 		}
 	}
 
