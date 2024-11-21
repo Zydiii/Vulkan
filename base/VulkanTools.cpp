@@ -8,10 +8,25 @@
 
 #include "VulkanTools.h"
 
+#include <windows.h>
+#include <iostream>
+
+std::string getExecutablePath() {
+	char path[MAX_PATH];
+	GetModuleFileName(NULL, path, MAX_PATH);
+	return std::string(path);
+}
+
+std::string getDirectory(const std::string& path) {
+	size_t pos = path.find_last_of("\\/");
+	return (std::string::npos == pos) ? "" : path.substr(0, pos);
+}
+
 #if !(defined(VK_USE_PLATFORM_IOS_MVK) || defined(VK_USE_PLATFORM_MACOS_MVK) || defined(VK_USE_PLATFORM_METAL_EXT))
 // iOS & macOS: getAssetPath() and getShaderBasePath() implemented externally for access to Obj-C++ path utilities
 const std::string getAssetPath()
 {
+	return getDirectory(getExecutablePath()) + "/assets/";
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
 	return "";
 #elif defined(VK_EXAMPLE_ASSETS_DIR)
@@ -23,6 +38,7 @@ const std::string getAssetPath()
 
 const std::string getShaderBasePath()
 {
+	return getDirectory(getExecutablePath()) + "/shaders/";
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
 	return "shaders/";
 #elif defined(VK_EXAMPLE_SHADERS_DIR)
@@ -89,7 +105,7 @@ namespace vks
 			}
 		}
 
-		VkBool32 getSupportedDepthFormat(VkPhysicalDevice physicalDevice, VkFormat *depthFormat)
+		VkBool32 getSupportedDepthFormat(VkPhysicalDevice physicalDevice, VkFormat* depthFormat)
 		{
 			// Since all depth formats may be optional, we need to find a suitable depth format to use
 			// Start with the highest precision packed format
@@ -344,7 +360,7 @@ namespace vks
 				MessageBox(NULL, message.c_str(), NULL, MB_OK | MB_ICONERROR);
 			}
 #elif defined(__ANDROID__)
-            LOGE("Fatal error: %s", message.c_str());
+			LOGE("Fatal error: %s", message.c_str());
 			vks::android::showAlert(message.c_str());
 #endif
 			std::cerr << message << "\n";
@@ -361,7 +377,7 @@ namespace vks
 #if defined(__ANDROID__)
 		// Android shaders are stored as assets in the apk
 		// So they need to be loaded via the asset manager
-		VkShaderModule loadShader(AAssetManager* assetManager, const char *fileName, VkDevice device)
+		VkShaderModule loadShader(AAssetManager* assetManager, const char* fileName, VkDevice device)
 		{
 			// Load shader from compressed asset
 			AAsset* asset = AAssetManager_open(assetManager, fileName, AASSET_MODE_STREAMING);
@@ -369,7 +385,7 @@ namespace vks
 			size_t size = AAsset_getLength(asset);
 			assert(size > 0);
 
-			char *shaderCode = new char[size];
+			char* shaderCode = new char[size];
 			AAsset_read(asset, shaderCode, size);
 			AAsset_close(asset);
 
@@ -388,7 +404,7 @@ namespace vks
 			return shaderModule;
 		}
 #else
-		VkShaderModule loadShader(const char *fileName, VkDevice device)
+		VkShaderModule loadShader(const char* fileName, VkDevice device)
 		{
 			std::ifstream is(fileName, std::ios::binary | std::ios::in | std::ios::ate);
 
@@ -419,18 +435,18 @@ namespace vks
 				std::cerr << "Error: Could not open shader file \"" << fileName << "\"" << "\n";
 				return VK_NULL_HANDLE;
 			}
-		}
+	}
 #endif
 
-		bool fileExists(const std::string &filename)
+		bool fileExists(const std::string& filename)
 		{
 			std::ifstream f(filename.c_str());
 			return !f.fail();
 		}
 
 		uint32_t alignedSize(uint32_t value, uint32_t alignment)
-        {
-	        return (value + alignment - 1) & ~(alignment - 1);
+		{
+			return (value + alignment - 1) & ~(alignment - 1);
 		}
 
 		size_t alignedSize(size_t value, size_t alignment)
@@ -444,5 +460,5 @@ namespace vks
 			return (value + alignment - 1) & ~(alignment - 1);
 		}
 
-	}
+}
 }
